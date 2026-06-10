@@ -39,3 +39,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# agents & helper tools
+.agents/
+.antigravitycli/
+skills-lock.json
+
+# test outputs
+test-results/
+
+# agent benchmarking logs & reports
+*benchmarks.json
+*research.json
+
