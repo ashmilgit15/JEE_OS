@@ -1282,7 +1282,7 @@ Tooling and search:
       {/* Main Chat Area */}
       <div className="flex flex-col flex-1 h-full min-w-0">
       {/* Header */}
-      <div className="border-b border-border/50 px-6 py-4 bg-card/20 backdrop-blur-sm sticky top-0 z-10">
+      <div className="border-b border-border/50 px-4 sm:px-6 py-3 sm:py-4 bg-card/20 backdrop-blur-sm shrink-0 z-10">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="md:hidden shrink-0" onClick={() => setSidebarOpen(true)}>
             <PanelLeft className="h-5 w-5" />
@@ -1466,7 +1466,7 @@ Tooling and search:
       </div>
 
       {/* Quick Prompts */}
-      <div className="border-t border-border/50 px-6 py-4 bg-card/10 backdrop-blur-sm sticky bottom-0">
+      <div className="border-t border-border/50 px-4 sm:px-6 py-3 sm:py-4 bg-card/10 backdrop-blur-sm shrink-0 pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto max-w-3xl">
           <div className="flex flex-wrap gap-2 mb-3.5">
             {quickPrompts.map((qp) => (

@@ -28,6 +28,8 @@ DO $$ BEGIN
 END $$;
 
 -- 2. TOPICS TABLE
+-- Reference data — all authenticated and anonymous users can read.
+-- Seeding via upsert is allowed for any authenticated or anonymous user.
 create table if not exists public.topics (
     id text primary key, -- unique alphanumeric ID e.g. 'phy-mech-units'
     name text not null,
@@ -35,6 +37,18 @@ create table if not exists public.topics (
     chapter_id text not null,
     chapter_name text not null
 );
+
+alter table public.topics enable row level security;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can read topics' AND tablename = 'topics') THEN
+    create policy "Anyone can read topics" on public.topics
+      for select using (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can upsert topics' AND tablename = 'topics') THEN
+    create policy "Anyone can upsert topics" on public.topics
+      for all using (true) with check (true);
+  END IF;
+END $$;
 
 -- Pre-seed topics from syllabus data is done on initialize.
 

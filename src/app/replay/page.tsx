@@ -103,7 +103,7 @@ export default function ReplayArenaPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-full bg-background text-foreground">
       <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
         
         {/* Header */}

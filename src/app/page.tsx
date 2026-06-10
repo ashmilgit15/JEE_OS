@@ -121,7 +121,7 @@ export default function Dashboard() {
 
   if (!mounted) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+      <div className="flex min-h-full items-center justify-center bg-background text-foreground">
         <div className="flex flex-col items-center gap-3">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           <p className="text-xs text-muted-foreground">Loading dashboard...</p>
@@ -197,7 +197,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen animate-in fade-in duration-500">
+    <div className="min-h-full animate-in fade-in duration-500">
       <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 space-y-5">
         {/* ─── Header ─── */}
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
@@ -714,6 +714,21 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         )}
+
+        {/* ─── Footer ─── */}
+        <footer className="flex flex-col items-center justify-center gap-1 py-6 border-t border-border/30">
+          <p className="text-[11px] text-muted-foreground">
+            Created by <span className="font-semibold text-foreground/80">Ashmil</span>
+          </p>
+          <a
+            href="https://instagram.com/4_shmil"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-muted-foreground/60 hover:text-primary transition-colors font-mono"
+          >
+            @4_shmil
+          </a>
+        </footer>
       </div>
     </div>
   );

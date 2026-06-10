@@ -124,6 +124,12 @@ export default function FloatingAICopilot() {
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ─── Draggable FAB State ────────────────────────────────────────────────────
+  const [fabPos, setFabPos] = useState<{ x: number; y: number } | null>(null);
+  const fabRef = useRef<HTMLDivElement>(null);
+  const dragStart = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const didDrag = useRef(false);
+
   const processMockOCR = (file: File) => {
     setIsOcrProcessing(true);
     const steps = [
@@ -532,12 +538,57 @@ Guidelines:
     }
   };
 
+  // ─── Draggable FAB Handlers ─────────────────────────────────────────────────
+  const DRAG_THRESHOLD = 8;
+  const handleFabPointerDown = useCallback((e: React.PointerEvent) => {
+    const el = fabRef.current;
+    if (!el) return;
+    el.setPointerCapture(e.pointerId);
+    const rect = el.getBoundingClientRect();
+    dragStart.current = { x: e.clientX, y: e.clientY, px: rect.left, py: rect.top };
+    didDrag.current = false;
+  }, []);
+
+  const handleFabPointerMove = useCallback((e: React.PointerEvent) => {
+    const s = dragStart.current;
+    if (!s) return;
+    const dx = e.clientX - s.x;
+    const dy = e.clientY - s.y;
+    if (!didDrag.current && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
+    didDrag.current = true;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const btnW = 56;
+    const btnH = 56;
+    const newX = Math.max(0, Math.min(vw - btnW, s.px + dx));
+    const newY = Math.max(0, Math.min(vh - btnH, s.py + dy));
+    setFabPos({ x: newX, y: newY });
+  }, []);
+
+  const handleFabPointerUp = useCallback(() => {
+    dragStart.current = null;
+  }, []);
+
+  const fabStyle: React.CSSProperties = fabPos
+    ? { position: 'fixed', left: fabPos.x, top: fabPos.y, bottom: 'auto', right: 'auto', zIndex: 40 }
+    : { position: 'fixed', bottom: 24, right: 24, zIndex: 40 };
+
   return (
     <>
       {/* ─── Floating Trigger Button (Ambient Widget Pill when collapsed) ─── */}
-      <div className="fixed bottom-6 right-6 z-40">
+      <div
+        ref={fabRef}
+        className="z-40 touch-none select-none"
+        style={fabStyle}
+        onPointerDown={handleFabPointerDown}
+        onPointerMove={handleFabPointerMove}
+        onPointerUp={handleFabPointerUp}
+      >
         <Button
-          onClick={() => setIsOpen(!isOpen)}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => {
+            if (!didDrag.current) setIsOpen(!isOpen);
+          }}
           className={`relative shadow-2xl hover:scale-105 transition-all duration-300 border border-white/10 group cursor-pointer ${
             isOpen 
               ? "h-14 w-14 rounded-full bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-600 p-0" 
@@ -677,7 +728,7 @@ Guidelines:
                             return <p key={i} style={{ whiteSpace: 'pre-wrap' }}>{renderInlineMath(repairedLine)}</p>;
                           });
 
-                          return (
+  return (
                             <>
                               {elements}
                               {graphData.graphs.length > 0 && (

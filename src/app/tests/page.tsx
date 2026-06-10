@@ -942,7 +942,7 @@ Provide:
 
   if (!mounted) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+      <div className="flex min-h-full items-center justify-center bg-background text-foreground">
         <div className="flex flex-col items-center gap-3">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           <p className="text-xs text-muted-foreground">Loading testing arena...</p>
@@ -1130,7 +1130,7 @@ Provide:
     // this branch returned `null`, producing a blank screen with no exit.
     if (!q) {
       return (
-        <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background text-foreground">
+        <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-background text-foreground">
           <p className="text-sm text-muted-foreground">No question available for this test.</p>
           <Button variant="outline" onClick={() => setMode('setup')}>Back to Setup</Button>
         </div>

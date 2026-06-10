@@ -119,6 +119,18 @@
   }
 }
 
+/* Mobile safe area support */
+@supports (padding: env(safe-area-inset-bottom)) {
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Prevent iOS bounce scroll */
+html, body {
+  overscroll-behavior: none;
+}
+
 /* Custom scrollbar */
 @layer base {
   ::-webkit-scrollbar {

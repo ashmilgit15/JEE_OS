@@ -380,7 +380,7 @@ export default function RevisionsPage() {
 
   if (!mounted) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+      <div className="flex min-h-full items-center justify-center bg-background text-foreground">
         <div className="flex flex-col items-center gap-3">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           <p className="text-xs text-muted-foreground">Loading revision engine...</p>
@@ -402,7 +402,7 @@ export default function RevisionsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-full bg-background">
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="mb-8 space-y-1">

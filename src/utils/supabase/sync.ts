@@ -65,7 +65,11 @@ export async function initSession(): Promise<string | null> {
 async function seedTopicsTable(): Promise<void> {
   try {
     const supabase = getClient();
-    const { data: existing } = await supabase.from('topics').select('id').limit(1);
+    const { data: existing, error: selectErr } = await supabase.from('topics').select('id').limit(1);
+    if (selectErr) {
+      console.warn('Cannot check topics table — skipping seed. Run supabase_schema.sql:', selectErr.message);
+      return;
+    }
     if (existing && existing.length > 0) return;
 
     const records: { id: string; name: string; subject: string; chapter_id: string; chapter_name: string }[] = [];
@@ -92,7 +96,7 @@ async function seedTopicsTable(): Promise<void> {
           .from('topics')
           .upsert(chunk, { onConflict: 'id', ignoreDuplicates: true });
         if (error) {
-          console.error('Failed to seed topics chunk:', error);
+          console.warn('seedTopicsTable chunk failed (missing RLS policy?):', error.message || error);
           break;
         }
       }
