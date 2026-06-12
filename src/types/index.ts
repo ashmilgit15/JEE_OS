@@ -216,6 +216,8 @@ export interface StudyResource {
   addedDate: string;
   size?: string;
   source?: string;
+  text?: string;
+  chunks?: string[];
 }
 
 // ---- Flashcard / Active Recall ----

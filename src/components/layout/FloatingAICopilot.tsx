@@ -103,6 +103,7 @@ function parseStreamEvents(line: string): any[] {
 
 import { handleStoreAction } from '@/utils/handleStoreAction';
 import { MemoryStore } from '@/utils/ai/memory';
+import { retrieveRelevantChunks } from '@/app/resources/page';
 
 export default function FloatingAICopilot() {
   const [isOpen, setIsOpen] = useState(false);
@@ -377,6 +378,7 @@ Guidelines:
           contextSummary,
           pageContent,
           memoryContext,
+          ragContext: retrieveRelevantChunks(text, state.resources || []),
         }),
       });
 

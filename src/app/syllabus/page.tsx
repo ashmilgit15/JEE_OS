@@ -80,6 +80,53 @@ const SUBJECT_META: Record<SubjectId, { icon: React.ReactNode; gradient: string;
   },
 };
 
+const CHAPTER_YIELD: Record<string, number> = {
+  'phy-mechanics': 4.0,
+  'phy-thermo': 3.5,
+  'phy-waves': 2.5,
+  'phy-electrostatics': 4.5,
+  'phy-current': 3.0,
+  'phy-magnetism': 4.0,
+  'phy-emi': 3.5,
+  'phy-emwaves': 1.5,
+  'phy-optics': 4.0,
+  'phy-modern': 5.0,
+  'chem-basic': 3.0,
+  'chem-bonding': 4.5,
+  'chem-equilibrium': 4.0,
+  'chem-thermo': 3.5,
+  'chem-kinetics': 3.0,
+  'chem-electrochemistry': 4.0,
+  'chem-solutions': 3.0,
+  'chem-solid': 2.0,
+  'chem-surface': 1.5,
+  'chem-coordination': 4.5,
+  'chem-organic-basic': 4.0,
+  'chem-hydrocarbons': 3.5,
+  'chem-organic-functional': 5.0,
+  'chem-inorganic': 4.0,
+  'math-algebra': 4.5,
+  'math-trigonometry': 2.5,
+  'math-coordinate': 4.5,
+  'math-calculus': 5.0,
+  'math-vectors': 4.5,
+};
+
+const DEPENDENCIES = [
+  { depId: 'math-calc-differentiability', prereqId: 'math-calc-limits', reason: 'Prerequisite: Differentiability requires complete understanding of Limit convergence.' },
+  { depId: 'math-calc-differentiation', prereqId: 'math-calc-differentiability', reason: 'Prerequisite: Differentiation methods build upon Differentiability rules.' },
+  { depId: 'math-calc-application-diff', prereqId: 'math-calc-differentiation', reason: 'Prerequisite: Application of Derivatives relies directly on differentiation calculations.' },
+  { depId: 'math-calc-definite', prereqId: 'math-calc-indefinite', reason: 'Prerequisite: Definite integrals require mastering antiderivative/indefinite integration.' },
+  { depId: 'math-calc-diffeq', prereqId: 'math-calc-differentiation', reason: 'Prerequisite: Differential Equations require calculating Derivatives and Integrals.' },
+  { depId: 'phy-mech-motion1d', prereqId: 'phy-mech-units', reason: 'Prerequisite: Kinematics relies on unit analysis and conversions.' },
+  { depId: 'phy-mech-motion2d', prereqId: 'phy-mech-motion1d', reason: 'Prerequisite: 2D vectors extend 1D straight-line projectile rules.' },
+  { depId: 'phy-mech-newton', prereqId: 'phy-mech-motion2d', reason: 'Prerequisite: Forces and NLM require vector acceleration equations.' },
+  { depId: 'phy-mech-workenergy', prereqId: 'phy-mech-newton', reason: 'Prerequisite: Work and Energy equations are derived from force vectors.' },
+  { depId: 'phy-mech-rotation', prereqId: 'phy-mech-workenergy', reason: 'Prerequisite: Rotational torque equations extend linear work-energy theorems.' },
+  { depId: 'chem-equilibrium-ionic', prereqId: 'chem-basic-mole', reason: 'Prerequisite: Ionic chemical constants build on concentration mole terms.' },
+  { depId: 'chem-electrochemistry-cells', prereqId: 'chem-equilibrium-ionic', reason: 'Prerequisite: Nernst potentials are calculated from chemical constants.' },
+];
+
 // ---------- helpers ----------
 
 function formatDate(dateStr: string | null): string {
@@ -441,69 +488,231 @@ export default function SyllabusPage() {
       });
     });
 
-    // Priority A: Prerequisite gaps for the active subject scope
+    // Helper to walk prerequisites recursively backwards
+    const getWeakestPrerequisite = (topicId: string, visited = new Set<string>()): string => {
+      if (visited.has(topicId)) return topicId;
+      visited.add(topicId);
+
+      const dependency = DEPENDENCIES.find(d => d.depId === topicId);
+      if (dependency) {
+        const prereqId = dependency.prereqId;
+        const preInfo = getTopicById(prereqId);
+        if (preInfo) {
+          const isWeak = preInfo.topic.status === 'not_started' || preInfo.topic.accuracy < 60 || preInfo.topic.confidence < 3;
+          if (isWeak) {
+            return getWeakestPrerequisite(prereqId, visited);
+          }
+        }
+      }
+      return topicId;
+    };
+
+    const resolveTopicCandidate = (topicId: string) => {
+      const resolvedId = getWeakestPrerequisite(topicId);
+      const resolvedInfo = getTopicById(resolvedId);
+      if (!resolvedInfo || resolvedInfo.topic.excluded) return null;
+      if (activeTab !== 'all' && resolvedInfo.subject.id !== activeTab) return null;
+      return resolvedInfo;
+    };
+
+    // Priority A: Overdue revisions
+    const overdueRevisions = getOverdueRevisions ? getOverdueRevisions() : [];
+    const activeOverdueRevisions = overdueRevisions.filter(r => activeTab === 'all' || r.subject === activeTab);
+    
+    interface RevisionCandidate {
+      topic: Topic;
+      chapter: Chapter;
+      subject: Subject;
+      yield: number;
+      revisionNumber: number;
+      originalTopicId: string;
+    }
+
+    const revisionCandidates: RevisionCandidate[] = [];
+    activeOverdueRevisions.forEach(rev => {
+      const resolved = resolveTopicCandidate(rev.topicId);
+      if (resolved) {
+        const yieldVal = CHAPTER_YIELD[resolved.chapter.id] || 1.0;
+        if (!revisionCandidates.some(c => c.topic.id === resolved.topic.id)) {
+          revisionCandidates.push({
+            topic: resolved.topic,
+            chapter: resolved.chapter,
+            subject: resolved.subject,
+            yield: yieldVal,
+            revisionNumber: rev.revisionNumber,
+            originalTopicId: rev.topicId,
+          });
+        }
+      }
+    });
+
+    revisionCandidates.sort((a, b) => {
+      if (b.yield !== a.yield) return b.yield - a.yield;
+      return b.revisionNumber - a.revisionNumber;
+    });
+
+    if (revisionCandidates.length > 0) {
+      const candidate = revisionCandidates[0];
+      const isPrereqResolved = candidate.topic.id !== candidate.originalTopicId;
+      const reason = isPrereqResolved
+        ? `Prerequisite Gap: You have an overdue revision on a topic, but its prerequisite "${candidate.topic.name}" is weak or unstarted. Master this fundamental topic first to secure your concepts.`
+        : `Forgetting Curve Alert: Scheduled Revision #${candidate.revisionNumber} is overdue for "${candidate.topic.name}". Revise now to prevent knowledge decay and reinforce spaced retention.`;
+
+      return {
+        topic: candidate.topic,
+        chapter: candidate.chapter,
+        subject: candidate.subject,
+        reason,
+        priority: 'High Priority Revision',
+        yield: candidate.yield
+      };
+    }
+
+    // Priority B: Prerequisite gaps for the active subject scope
     const activeGapsForActiveTab = prereqGaps.filter(g => {
       const depInfo = getTopicById(g.dependentId);
       return depInfo && (activeTab === 'all' || depInfo.subject.id === activeTab);
     });
 
-    if (activeGapsForActiveTab.length > 0) {
-      const gap = activeGapsForActiveTab[0];
-      const prereqInfo = getTopicById(gap.topicId);
-      if (prereqInfo) {
-        return {
-          topic: prereqInfo.topic,
-          chapter: prereqInfo.chapter,
-          subject: prereqInfo.subject,
-          reason: `Prerequisite Gap: You have started study on "${gap.dependentName}", but its prerequisite "${prereqInfo.topic.name}" is weak or unstarted. Master this fundamental topic first to secure your concepts.`,
-          priority: 'Critical Fundamental'
-        };
-      }
+    interface GapCandidate {
+      topic: Topic;
+      chapter: Chapter;
+      subject: Subject;
+      yield: number;
+      dependentName: string;
     }
 
-    // Priority B: Overdue revisions
-    const overdueRevisions = getOverdueRevisions ? getOverdueRevisions() : [];
-    const activeOverdueRevisions = overdueRevisions.filter(r => activeTab === 'all' || r.subject === activeTab);
-    if (activeOverdueRevisions.length > 0) {
-      const rev = activeOverdueRevisions[0];
-      const topicInfo = getTopicById(rev.topicId);
-      if (topicInfo) {
-        return {
-          topic: topicInfo.topic,
-          chapter: topicInfo.chapter,
-          subject: topicInfo.subject,
-          reason: `Forgetting Curve Alert: Scheduled Revision #${rev.revisionNumber} is overdue for "${topicInfo.topic.name}". Revise now to prevent knowledge decay and reinforce spaced retention.`,
-          priority: 'High Priority Revision'
-        };
+    const gapCandidates: GapCandidate[] = [];
+    activeGapsForActiveTab.forEach(gap => {
+      const resolved = resolveTopicCandidate(gap.topicId);
+      if (resolved) {
+        const yieldVal = CHAPTER_YIELD[resolved.chapter.id] || 1.0;
+        if (!gapCandidates.some(c => c.topic.id === resolved.topic.id)) {
+          gapCandidates.push({
+            topic: resolved.topic,
+            chapter: resolved.chapter,
+            subject: resolved.subject,
+            yield: yieldVal,
+            dependentName: gap.dependentName,
+          });
+        }
       }
+    });
+
+    gapCandidates.sort((a, b) => b.yield - a.yield);
+
+    if (gapCandidates.length > 0) {
+      const candidate = gapCandidates[0];
+      return {
+        topic: candidate.topic,
+        chapter: candidate.chapter,
+        subject: candidate.subject,
+        reason: `Prerequisite Gap: You have started study on "${candidate.dependentName}", but its prerequisite "${candidate.topic.name}" is weak or unstarted. Master this fundamental topic first to secure your concepts.`,
+        priority: 'Critical Fundamental',
+        yield: candidate.yield
+      };
     }
 
     // Priority C: Weakest topics in progress or completed
-    const weakTopics = allTopics.filter(x => 
+    const activeWeakTopics = allTopics.filter(x => 
       x.topic.status !== 'not_started' && 
+      !x.topic.excluded &&
       (x.topic.accuracy < 65 || x.topic.confidence < 3)
-    ).sort((a, b) => a.topic.accuracy - b.topic.accuracy);
+    );
 
-    if (weakTopics.length > 0) {
-      const wt = weakTopics[0];
+    interface WeakCandidate {
+      topic: Topic;
+      chapter: Chapter;
+      subject: Subject;
+      yield: number;
+      originalAccuracy: number;
+      originalTopicId: string;
+    }
+
+    const weakCandidates: WeakCandidate[] = [];
+    activeWeakTopics.forEach(wt => {
+      const resolved = resolveTopicCandidate(wt.topic.id);
+      if (resolved) {
+        const yieldVal = CHAPTER_YIELD[resolved.chapter.id] || 1.0;
+        if (!weakCandidates.some(c => c.topic.id === resolved.topic.id)) {
+          weakCandidates.push({
+            topic: resolved.topic,
+            chapter: resolved.chapter,
+            subject: resolved.subject,
+            yield: yieldVal,
+            originalAccuracy: wt.topic.accuracy,
+            originalTopicId: wt.topic.id,
+          });
+        }
+      }
+    });
+
+    weakCandidates.sort((a, b) => {
+      if (b.yield !== a.yield) return b.yield - a.yield;
+      return a.originalAccuracy - b.originalAccuracy;
+    });
+
+    if (weakCandidates.length > 0) {
+      const candidate = weakCandidates[0];
+      const isPrereqResolved = candidate.topic.id !== candidate.originalTopicId;
+      const reason = isPrereqResolved
+        ? `Prerequisite Gap: You need to improve "${candidate.topic.name}" because it is a prerequisite for a weak topic, and it is currently weak or unstarted.`
+        : `Targeted Improvement: Your accuracy in "${candidate.topic.name}" is low (${candidate.topic.accuracy}% accuracy, ${candidate.topic.confidence} stars confidence). Spend some time reviewing formulas and re-solving incorrect questions to boost score yield.`;
+
       return {
-        topic: wt.topic,
-        chapter: wt.chapter,
-        subject: wt.subject,
-        reason: `Targeted Improvement: Your accuracy in "${wt.topic.name}" is low (${wt.topic.accuracy}% accuracy, ${wt.topic.confidence} stars confidence). Spend some time reviewing formulas and re-solving incorrect questions to boost score yield.`,
-        priority: 'Improvement Required'
+        topic: candidate.topic,
+        chapter: candidate.chapter,
+        subject: candidate.subject,
+        reason,
+        priority: 'Improvement Required',
+        yield: candidate.yield
       };
     }
 
     // Priority D: First unstarted topic
-    const unstarted = allTopics.find(x => x.topic.status === 'not_started');
-    if (unstarted) {
+    const activeUnstarted = allTopics.filter(x => x.topic.status === 'not_started' && !x.topic.excluded);
+
+    interface UnstartedCandidate {
+      topic: Topic;
+      chapter: Chapter;
+      subject: Subject;
+      yield: number;
+      originalTopicId: string;
+    }
+
+    const unstartedCandidates: UnstartedCandidate[] = [];
+    activeUnstarted.forEach(un => {
+      const resolved = resolveTopicCandidate(un.topic.id);
+      if (resolved) {
+        const yieldVal = CHAPTER_YIELD[resolved.chapter.id] || 1.0;
+        if (!unstartedCandidates.some(c => c.topic.id === resolved.topic.id)) {
+          unstartedCandidates.push({
+            topic: resolved.topic,
+            chapter: resolved.chapter,
+            subject: resolved.subject,
+            yield: yieldVal,
+            originalTopicId: un.topic.id,
+          });
+        }
+      }
+    });
+
+    unstartedCandidates.sort((a, b) => b.yield - a.yield);
+
+    if (unstartedCandidates.length > 0) {
+      const candidate = unstartedCandidates[0];
+      const isPrereqResolved = candidate.topic.id !== candidate.originalTopicId;
+      const reason = isPrereqResolved
+        ? `Prerequisite Gap: To start studying new topics, you must first master their foundational prerequisite "${candidate.topic.name}".`
+        : `Syllabus Completion: You haven't started "${candidate.topic.name}" yet. Begin studying this new topic to expand your syllabus coverage.`;
+
       return {
-        topic: unstarted.topic,
-        chapter: unstarted.chapter,
-        subject: unstarted.subject,
-        reason: `Syllabus Completion: You haven't started "${unstarted.topic.name}" yet. Begin studying this new topic to expand your syllabus coverage.`,
-        priority: 'Next Syllabus Topic'
+        topic: candidate.topic,
+        chapter: candidate.chapter,
+        subject: candidate.subject,
+        reason,
+        priority: 'Next Syllabus Topic',
+        yield: candidate.yield
       };
     }
 
@@ -590,6 +799,11 @@ export default function SyllabusPage() {
                   <Badge variant="outline" className="text-[10px] uppercase font-semibold text-muted-foreground border-border/40">
                     Priority: {recommendedTopic.priority}
                   </Badge>
+                  {recommendedTopic.yield !== undefined && (
+                    <Badge variant="outline" className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border-emerald-500/20">
+                      ROI Yield: {recommendedTopic.yield.toFixed(1)}/5.0
+                    </Badge>
+                  )}
                 </div>
                 <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
                   Recommended focus: <span className="text-primary font-bold">{recommendedTopic.topic.name}</span> 

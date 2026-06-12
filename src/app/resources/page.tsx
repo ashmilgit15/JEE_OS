@@ -51,6 +51,90 @@ const subjectColors: Record<string, string> = {
   general: '#8b5cf6',
 };
 
+const loadPdfJs = (): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    if ((window as any).pdfjsLib) {
+      resolve((window as any).pdfjsLib);
+      return;
+    }
+    const existingScript = document.getElementById('pdfjs-script');
+    if (existingScript) {
+      existingScript.addEventListener('load', () => {
+        (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        resolve((window as any).pdfjsLib);
+      });
+      return;
+    }
+    const script = document.createElement('script');
+    script.id = 'pdfjs-script';
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => {
+      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve((window as any).pdfjsLib);
+    };
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+};
+
+const extractTextFromPdf = async (arrayBuffer: ArrayBuffer): Promise<string> => {
+  const pdfjsLib = await loadPdfJs();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items.map((item: any) => item.str).join(' ');
+    text += `[Page ${i}] ${pageText}\n`;
+  }
+  return text;
+};
+
+const chunkText = (text: string, size = 500, overlap = 100): string[] => {
+  if (!text) return [];
+  const chunks: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const chunk = text.substring(i, i + size).trim();
+    if (chunk.length > 0) {
+      chunks.push(chunk);
+    }
+    i += size - overlap;
+  }
+  return chunks;
+};
+
+export const retrieveRelevantChunks = (query: string, resources: any[]): string => {
+  if (!query || !resources || resources.length === 0) return '';
+  const keywords = query
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !['the', 'and', 'for', 'you', 'that', 'with', 'from', 'what', 'how', 'why', 'can', 'pdf', 'notes', 'find', 'search', 'get'].includes(w));
+  if (keywords.length === 0) return '';
+  const matches: { docName: string; chunk: string; score: number }[] = [];
+  resources.forEach(res => {
+    if (!res.chunks || res.chunks.length === 0) return;
+    res.chunks.forEach((chunk: string) => {
+      let score = 0;
+      const lowerChunk = chunk.toLowerCase();
+      keywords.forEach(word => {
+        if (lowerChunk.includes(word)) {
+          const count = (lowerChunk.match(new RegExp(word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g')) || []).length;
+          score += count;
+        }
+      });
+      if (score > 0) {
+        matches.push({ docName: res.name, chunk, score });
+      }
+    });
+  });
+  matches.sort((a, b) => b.score - a.score);
+  const topMatches = matches.slice(0, 3);
+  if (topMatches.length === 0) return '';
+  return topMatches.map(m => `Document: ${m.docName}\nExcerpt: ${m.chunk}`).join('\n\n');
+};
+
 export default function ResourcesPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -58,8 +142,82 @@ export default function ResourcesPage() {
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState('all');
   const [pageViewTab, setPageViewTab] = useState('library');
+  const [isUploading, setIsUploading] = useState(false);
 
   const resources = state.resources;
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setIsUploading(true);
+    try {
+      const extension = file.name.split('.').pop()?.toLowerCase();
+      let text = '';
+      
+      if (extension === 'pdf') {
+        const arrayBuffer = await file.arrayBuffer();
+        text = await extractTextFromPdf(arrayBuffer);
+      } else if (extension === 'txt' || extension === 'md') {
+        text = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsText(file);
+        });
+      } else {
+        alert('Unsupported file format. Please upload .pdf, .txt, or .md files.');
+        setIsUploading(false);
+        return;
+      }
+      
+      if (!text.trim()) {
+        alert('Could not extract any text from the uploaded file.');
+        setIsUploading(false);
+        return;
+      }
+      
+      const chunks = chunkText(text, 500, 100);
+      
+      // Guess subject
+      const nameLower = file.name.toLowerCase();
+      let subject: any = 'general';
+      if (nameLower.includes('physics') || nameLower.includes('phy')) subject = 'physics';
+      else if (nameLower.includes('chemistry') || nameLower.includes('chem')) subject = 'chemistry';
+      else if (nameLower.includes('math') || nameLower.includes('algebra') || nameLower.includes('calculus') || nameLower.includes('geometry')) subject = 'mathematics';
+      
+      const formatBytes = (bytes: number): string => {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+      };
+
+      const newResource = {
+        id: `res-${Date.now()}`,
+        name: file.name,
+        type: extension === 'pdf' ? ('pdf' as const) : ('notes' as const),
+        subject,
+        description: `Local study material containing ${file.name.split('.').slice(0, -1).join('.')} contents (${chunks.length} text chunks for RAG search).`,
+        url: '',
+        addedDate: new Date().toISOString(),
+        size: formatBytes(file.size),
+        source: 'Local Upload',
+        text,
+        chunks
+      };
+      
+      dispatch({ type: 'ADD_RESOURCE', payload: newResource });
+      alert(`Success! Successfully parsed and indexed "${file.name}" into your Material Library.`);
+    } catch (err) {
+      console.error('File upload failed:', err);
+      alert('Error parsing document. Make sure it is not corrupted.');
+    } finally {
+      setIsUploading(false);
+      e.target.value = '';
+    }
+  };
 
   const [messages, setMessages] = useState<any[]>([
     {
@@ -123,6 +281,7 @@ Capabilities:
       const pageContent = getDOMSummary(pathname);
       const memory = new MemoryStore(deviceId);
       const memoryContext = await memory.getContextString(text, 8);
+      const ragContext = retrieveRelevantChunks(text, resources);
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -137,6 +296,7 @@ Capabilities:
           contextSummary,
           pageContent,
           memoryContext,
+          ragContext,
         }),
       });
 
@@ -350,6 +510,23 @@ Capabilities:
                 placeholder="Search resources..."
                 className="pl-9 bg-card border-border/50"
               />
+            </div>
+            <div>
+              <input
+                type="file"
+                id="file-upload-input"
+                accept=".pdf,.txt,.md"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <Button
+                onClick={() => document.getElementById('file-upload-input')?.click()}
+                disabled={isUploading}
+                className="gap-2 cursor-pointer bg-primary text-primary-foreground hover:bg-primary/95"
+              >
+                <Plus className="h-4 w-4" />
+                {isUploading ? 'Ingesting...' : 'Upload PDF/TXT'}
+              </Button>
             </div>
           </div>
 

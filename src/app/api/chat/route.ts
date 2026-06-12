@@ -6,6 +6,7 @@ import { MemoryStore, executeDeepResearch } from '@/utils/ai';
 import { toolSchemas, executeServerTool } from '@/utils/ai/tools';
 import { rateLimit } from '@/utils/rate-limit';
 import { z } from 'zod';
+import { parseScrapedQuestions } from '@/utils/math-cleaner';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Allow sufficient time for multi-turn search runs
@@ -697,7 +698,8 @@ export async function POST(req: Request) {
       action,
       query,
       response,
-      context
+      context,
+      ragContext
     } = body;
 
     const hackClubApiKey = process.env.HACKCLUB_API_KEY;
@@ -937,6 +939,9 @@ I searched the web for "${latestQuery}" and found the following:
           if (pageContent) {
             augmentedSystemPrompt += `\n\n### Current Screen Context (DOM Summary):\nThe student is currently looking at this on their screen:\n${pageContent}`;
           }
+          if (ragContext) {
+            augmentedSystemPrompt += `\n\n### 📖 Local Study Materials & Resources (RAG Context):\nThe following relevant content was retrieved from the student's uploaded textbooks/notes:\n${ragContext}\n\nUse this local knowledge to formulate your answer. Cite the document name where the information was retrieved.`;
+          }
           augmentedSystemPrompt += `\n\n---\n### Tool Action Markers\nWhen you intend to update a topic's status, include this exact marker in your response:\n[MARK:Topic Name:status]\n- Valid statuses: learning, in progress, completed, revised, mastered, not started\n- Example: "I'll mark that for you now. [MARK:Linear Inequalities:in progress]"\n\nWhen you intend to log study time, include:\n[LOG:Topic Name:minutes]\n- Example: "I've logged your study session. [LOG:Kinematics:45]"\n\nNew advanced markers:\n- [REMEMBER:observation] — Save an observation about the user to shared memory\n- [DEEP_RESEARCH:query] — Trigger multi-step deep research on a topic\n\nPlace the marker naturally in your response text. The system will process it automatically.`;
 
           augmentedSystemPrompt += `\n\n### 🧪 AI-Generated Custom Tests (Agentic Flow)\nWhen the user asks for a mock test/quiz/practice on any specific NCERT topic (e.g. "give me a mock test on linear inequalities exercise 6.1", "quiz on kinematics", "25 JEE Main practice questions"):\n1. **Generate 5-15 MCQ questions directly** from your training knowledge (you know NCERT/JEE content well). Each question MUST have exactly 4 options with one correct answer.\n2. **Call \`generate_mock_test\`** with the \`questions\` parameter containing your generated questions. If you need web research for a topic you're unsure about, first include \`[DEEP_RESEARCH:<topic>]\` in your response text (the system will research it), then generate questions from the researched content. However, for standard NCERT topics like Linear Inequalities, Kinematics, etc., generate questions directly — you already know them.\n3. Each question MUST include: \`question\` (string with LaTeX math using $...$), \`options\` (array of exactly 4 strings), \`correctAnswer\` (0-3 index of correct option), \`explanation\` (string explaining the solution).\n4. Do NOT ask the user to configure anything — just tell them what you are creating and launch it immediately. Example: "Creating a 10-question mock test on Linear Inequalities..." then call the tool.`;
@@ -1041,7 +1046,7 @@ I searched the web for "${latestQuery}" and found the following:
               });
               sendEvent({ type: 'text', content: contentStr });
             } else {
-              await runSmartFallback(latestQuery, tavilyApiKey || '', sendEvent);
+              await runSmartFallback(latestQuery, tavilyApiKey || '', sendEvent, ragContext);
             }
             controller.close();
             return;
@@ -1195,7 +1200,7 @@ I searched the web for "${latestQuery}" and found the following:
           const cleanedAssistant = assistantContent.trim();
           if (!cleanedAssistant && !toolActionEmitted) {
             console.warn('LLM returned empty content and no tool action; running smart fallback.');
-            await runSmartFallback(latestQuery, tavilyApiKey || '', sendEvent);
+            await runSmartFallback(latestQuery, tavilyApiKey || '', sendEvent, ragContext);
           }
 
           controller.close();
@@ -1250,7 +1255,7 @@ I searched the web for "${latestQuery}" and found the following:
               });
               sendEvent({ type: 'text', content: contentStr });
             } else {
-            await runSmartFallback(latestQuery, tavilyApiKey || '', sendEvent);
+            await runSmartFallback(latestQuery, tavilyApiKey || '', sendEvent, ragContext);
           }
           controller.close();
         }
@@ -1265,7 +1270,7 @@ I searched the web for "${latestQuery}" and found the following:
 }
 
 // Smart local fallback that handles searching and tool call mockups dynamically
-async function runSmartFallback(query: string, tavilyKey: string, sendEvent: (event: object) => void) {
+async function runSmartFallback(query: string, tavilyKey: string, sendEvent: (event: object) => void, ragContext?: string) {
   // Track whether at least one text event was sent; if not, emit a safety-net fallback
   // at the end. This guarantees the frontend always receives content.
   let _hasSentText = false;
@@ -1277,6 +1282,12 @@ async function runSmartFallback(query: string, tavilyKey: string, sendEvent: (ev
 
   try {
     const lowerQuery = query.toLowerCase();
+    
+    if (ragContext && !lowerQuery.includes('strategic mock diagnostic') && !lowerQuery.includes('test stats:')) {
+      sendEvent({ type: 'status', message: 'Retrieving local resource knowledge...' });
+      await new Promise(r => setTimeout(r, 400));
+      sendEvent({ type: 'text', content: `### 📖 Local Study Resource Insights\nBased on your uploaded study materials, here is the relevant information I found:\n\n${ragContext}\n\n---\n` });
+    }
 
     // AI Test Strategist Report Fallback
     if (lowerQuery.includes('strategic mock diagnostic') || lowerQuery.includes('test stats:')) {
@@ -1819,6 +1830,15 @@ function buildQuestionsFromSearchResults(searchResults: any, topicName: string):
   }
 
   const body = textContent.join('\n\n');
+
+  try {
+    const scraped = parseScrapedQuestions(body);
+    if (scraped.length >= 3) {
+      return scraped;
+    }
+  } catch (e) {
+    console.warn('Scraped question parsing failed, falling back to regex:', e);
+  }
 
   if (body.length < 50) {
     return generateDefaultQuestions(topicName);

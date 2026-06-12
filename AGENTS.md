@@ -14,10 +14,11 @@ Next.js 16.2.7 + React 19.2.4 + Tailwind v4 + `@base-ui/react` (not Radix) + Sup
 |---------|------|
 | `npm run dev` | Dev server |
 | `npm run build` | TypeScript check + production build |
-| `npm run lint` | ESLint (7 errors, 88 warnings as of last run) |
+| `npm run lint` | ESLint (currently 0 errors, 0 warnings) |
 | `npm start` | Production server |
+| `npx playwright test` | E2E tests (requires dev server running) |
 
-No test runner configured.
+No test runner in `package.json`. Playwright config at `playwright.config.ts`, tests in `e2e/`.
 
 ## Architecture
 
@@ -46,41 +47,31 @@ No test runner configured.
 | Global CSS + theme tokens | `src/app/globals.css` |
 | DB schema (Supabase SQL) | `supabase_schema.sql` |
 
-## Known issues in the codebase (do not re-introduce)
+## Tailwind v4 notes
 
-### Build
-- Build succeeds with 0 TypeScript errors.
-
-### Lint errors (7)
-- `analytics/page.tsx:898,906` — 4 `react/no-unescaped-entities` (`"` should be escaped)
-- `api/chat/route.ts:264,281,367` — 3 `prefer-const` (`useFallback`, `currentMessages`, `topicNameCandidate` should be `const`)
-
-### Lint warnings (88)
-- Many unused imports across page files. Notably `@typescript-eslint/no-unused-vars`.
-- `revisions/page.tsx:225` — `new Date()` inside `useMemo` dependency breaks memoization.
-- `syllabus/page.tsx:394` — `state` as `useMemo` dependency causes full re-compute on every dispatch.
-- `supabase/middleware.ts:15` — `supabase` variable created in middleware but never used.
-
-### Logic bugs
-- `log/page.tsx:597` — Tabs use `defaultValue` (uncontrolled) but `setSelectedSubject` tries to control it programmatically. UI and state will desync.
-- `tutor/page.tsx:627` and `FloatingAICopilot.tsx` — `new URL(result.url).hostname` crashes at runtime if URL is malformed. No try/catch.
-- `handoff.md` documents `NEXT_PUBLIC_SUPABASE_ANON_KEY` but code uses `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
-- `api/chat/route.ts` — Uses `let` for variables never reassigned (`useFallback`, `currentMessages`, `topicNameCandidate`).
-- `store/index.tsx` — `isToday`, `startOfDay` imported from `date-fns` but unused.
-
-### Tailwind v4 note
 - Tailwind v4 uses CSS-first configuration (`@theme` in `globals.css`), no `tailwind.config.js`. Do not try to edit a non-existent config file.
 - The Button component in `button.tsx` defines custom sizes: `xs`, `icon-xs`, `icon-sm`, `icon-lg`. These are NOT `@base-ui/react` button sizes — they're from the `class-variance-authority` variants.
-- `h-4.5` / `w-4.5` classes exist in some page files — these are NOT valid Tailwind v4 spacing scale classes and will be ignored.
 
-### Component API differences from standard shadcn
-- `@base-ui/react` components use `render` prop (not `asChild`) for polymorphic composition. Example in `Sidebar.tsx:118` and `sheet.tsx:65`.
+## Component API differences from standard shadcn
+
+- `@base-ui/react` components use `render` prop (not `asChild`) for polymorphic composition. Example in `Sidebar.tsx:180` and `sheet.tsx:65`.
 - Tooltip uses `TooltipPrimitive.Popup` + `TooltipPrimitive.Positioner` (not `Content`+`Trigger` pattern from Radix).
 - Sheet is based on `@base-ui/react/dialog` not `@radix-ui/react-dialog`.
 
-### Supabase caveats
+## Supabase caveats
+
 - Supabase SSR uses `@supabase/ssr` (not `@supabase/supabase-js` directly for auth).
 - Server client in `server.ts` requires a `cookieStore` parameter (from `next/headers`).
-- The `.env.local` variable is `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (NOT `ANON_KEY` — the handoff doc is wrong).
-- `middleware.ts` returns `supabaseResponse` but never uses the `supabase` client it creates.
+- The `.env.local` variable is `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (NOT `ANON_KEY` — some docs like `handoff.md` may be outdated).
 - `revision_tasks` table must exist in Supabase — run `supabase_schema.sql` in the SQL editor. `sync.ts:ensureRevisionTable` checks once per session and skips the upsert with a console.warn if the table is missing.
+
+## Known issues (do not re-introduce)
+
+### Build
+- Build succeeds with 0 TypeScript errors.
+- Lint passes cleanly (0 errors, 0 warnings).
+
+### Logic issues to preserve awareness of
+
+- `api/chat/route.ts:1367,1451` — `topicNameCandidate` uses `let` correctly (reassigned in if/else branches). Do not "fix" to `const`.
+- `tutor/page.tsx:1374` and `FloatingAICopilot.tsx` — `new URL(result.url).hostname` is wrapped in try/catch. Preserve this pattern if editing URL handling.

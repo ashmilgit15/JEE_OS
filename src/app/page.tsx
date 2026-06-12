@@ -227,7 +227,7 @@ export default function Dashboard() {
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <Brain className="size-4 sm:size-5 text-indigo-400 animate-pulse" />
-                <span className="text-[10px] sm:text-xs font-semibold text-indigo-400 uppercase tracking-wider">AI Strategy</span>
+                <span className="text-[10px] sm:text-xs font-semibold text-indigo-400 uppercase tracking-wider">AI Strategy Control HUD</span>
               </div>
               
               <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">
@@ -245,7 +245,7 @@ export default function Dashboard() {
                   </span>
                 )}
               </p>
-
+ 
               <div className="grid grid-cols-3 gap-2">
                 <div className="p-2 rounded-lg bg-red-950/15 border border-red-500/10 text-center space-y-0.5">
                   <span className="text-[9px] text-red-400 uppercase font-semibold">Low</span>
@@ -261,7 +261,7 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
-
+ 
             <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-3">
               <span className="text-[10px] text-zinc-500 italic hidden sm:block">
                 Based on {state.testAttempts.length} mocks
@@ -272,7 +272,7 @@ export default function Dashboard() {
                 size="sm"
               >
                 <Bot className="size-3.5" />
-                Priorities
+                Study Recommendation Checklist
                 <ArrowRight className="size-3.5" />
               </Button>
             </div>
@@ -282,7 +282,7 @@ export default function Dashboard() {
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <Flame className={`size-4 sm:size-5 ${burnout.status === 'healthy' ? 'text-emerald-400' : burnout.status === 'warning' ? 'text-amber-400 animate-pulse' : 'text-red-500 animate-bounce'}`} />
-                <span className="text-[10px] sm:text-xs font-semibold text-zinc-300 uppercase tracking-wider">Fatigue Index</span>
+                <span className="text-[10px] sm:text-xs font-semibold text-zinc-300 uppercase tracking-wider">Burnout & Fatigue Index</span>
               </div>
 
               <div className="space-y-1">
@@ -325,7 +325,7 @@ export default function Dashboard() {
               <div className="p-3 sm:p-4 border-b border-border/50 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2">
                   <Bot className="size-4 text-primary" />
-                  <h3 className="text-sm font-semibold">Study Priorities</h3>
+                  <h3 className="text-sm font-semibold">Your Personalized Study Priorities</h3>
                 </div>
                 <button 
                   onClick={() => setShowRecommendationModal(false)}
@@ -384,7 +384,7 @@ export default function Dashboard() {
               
               <div className="p-3 bg-muted/30 border-t border-border/30 flex justify-end shrink-0">
                 <Button variant="ghost" size="sm" onClick={() => setShowRecommendationModal(false)} className="text-xs cursor-pointer h-7">
-                  Close
+                  Close Checklist
                 </Button>
               </div>
             </div>
@@ -468,7 +468,7 @@ export default function Dashboard() {
                      <div className="p-1.5 rounded-md bg-indigo-500/10">
                        <Brain className="size-3.5 text-indigo-400" />
                      </div>
-                     <span className="text-xs font-medium text-muted-foreground">Readiness</span>
+                     <span className="text-xs font-medium text-muted-foreground">JEE Readiness Score</span>
                    </div>
                    <span className="text-lg font-bold text-indigo-200">{overallReadiness}%</span>
                  </div>
@@ -492,7 +492,7 @@ export default function Dashboard() {
             </Card>
             <StatCard
               icon={Clock}
-              label="Study"
+              label="Study Target"
               value={`${studyHoursToday.toFixed(1)}h`}
               subtitle={`of ${state.profile.studyHoursPerDay}h`}
               color="blue"
@@ -701,7 +701,7 @@ export default function Dashboard() {
             <CardContent className="py-3 px-4">
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-xs font-medium text-muted-foreground">
-                  Syllabus Progress
+                  Overall Syllabus Progress
                 </span>
                 <span className="text-xs font-bold tabular-nums">
                   {Math.round((completedTopicsCount / totalTopicsCount) * 100)}%

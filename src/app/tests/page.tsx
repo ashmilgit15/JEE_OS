@@ -38,20 +38,22 @@ import { TestQuestion, TestAttempt, SubjectId, Difficulty, ErrorType } from '@/t
 import { v4 as uuidv4 } from 'uuid';
 import { format, addDays } from 'date-fns';
 import katex from 'katex';
+import { cleanMathText } from '@/utils/math-cleaner';
 
 type TestMode = 'setup' | 'taking' | 'results';
 type TestType = 'topic' | 'chapter' | 'mixed' | 'daily';
 
 function renderInlineMath(text: string): React.ReactNode {
   if (typeof text !== 'string') return text;
+  const cleanedText = cleanMathText(text);
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
   let key = 0;
   const regex = /\$\$(.+?)\$\$|\$(.+?)\$/g;
   let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = regex.exec(cleanedText)) !== null) {
     if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
+      parts.push(cleanedText.slice(lastIndex, match.index));
     }
     const mathContent = match[1] || match[2];
     const displayMode = !!match[1];
@@ -63,10 +65,10 @@ function renderInlineMath(text: string): React.ReactNode {
     }
     lastIndex = match.index + match[0].length;
   }
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
+  if (lastIndex < cleanedText.length) {
+    parts.push(cleanedText.slice(lastIndex));
   }
-  if (parts.length === 0) return text;
+  if (parts.length === 0) return cleanedText;
   if (parts.length === 1 && typeof parts[0] === 'string') return parts[0];
   return <>{parts}</>;
 }

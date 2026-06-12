@@ -26,6 +26,7 @@ import { createClient } from '@/utils/supabase/client';
 import { getDeviceId, getContextSummaryFromState, formatContextSummary, saveMessage } from '@/utils/supabase/conversations';
 import { getDOMSummary } from '@/utils/domSummarizer';
 import { MemoryStore } from '@/utils/ai/memory';
+import { retrieveRelevantChunks } from '@/app/resources/page';
 
 
 interface ChatSession {
@@ -979,6 +980,7 @@ Tooling and search:
       const pageContent = getDOMSummary(pathname);
       const memory = new MemoryStore(deviceId);
       const memoryContext = await memory.getContextString(text, 8);
+      const ragContext = retrieveRelevantChunks(text, state.resources || []);
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -993,6 +995,7 @@ Tooling and search:
           contextSummary,
           pageContent,
           memoryContext,
+          ragContext,
         }),
       });
 
