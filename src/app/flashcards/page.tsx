@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useStore } from '@/store';
+import { useStore, useDispatch } from '@/store';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -345,7 +345,7 @@ function CreateCardForm({ onClose }: { onClose: () => void }) {
 // ─── Card Row ─────────────────────────────────────────────────────────────────
 
 function CardRow({ card }: { card: Flashcard }) {
-  const { dispatch } = useStore();
+  const dispatch = useDispatch();
   const meta = SUBJECT_META[card.subject];
   const isDue = !card.nextReviewAt || !isAfter(parseISO(card.nextReviewAt), startOfDay(new Date()));
 

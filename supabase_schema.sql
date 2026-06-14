@@ -340,3 +340,38 @@ DO $$ BEGIN
       for all using (auth.uid() = user_id);
   END IF;
 END $$;
+
+-- 14. QUESTIONS TABLE  (shared JEE question bank — read-only reference data)
+-- Migrated out of the static src/data/questions.ts so the bank can grow to cover
+-- all ~160 topics without bloating the client bundle. Served via /api/questions.
+-- Seeded by src/utils/supabase/seedQuestions.ts. Public read; writes restricted
+-- to the seed path (insert allowed, no update/delete policy → effectively locked).
+create table if not exists public.questions (
+    id text primary key, -- stable question id e.g. 'phy-q1'
+    question text not null,
+    options text[] not null,
+    correct_answer integer not null check (correct_answer between 0 and 3),
+    explanation text not null default '',
+    topic_id text,
+    chapter_id text,
+    subject text not null check (subject in ('physics', 'chemistry', 'mathematics')),
+    difficulty text not null default 'medium',
+    type text not null default 'mcq',
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists questions_subject_idx on public.questions(subject);
+create index if not exists questions_topic_idx on public.questions(topic_id);
+create index if not exists questions_chapter_idx on public.questions(chapter_id);
+
+alter table public.questions enable row level security;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can read questions' AND tablename = 'questions') THEN
+    create policy "Anyone can read questions" on public.questions
+      for select using (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can insert questions' AND tablename = 'questions') THEN
+    create policy "Anyone can insert questions" on public.questions
+      for insert with check (true);
+  END IF;
+END $$;

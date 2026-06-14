@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { extractGraphReferences, FunctionGraph } from '@/components/math/FunctionGraph';
 import { renderInlineMath } from '@/utils/rendering';
-import { parseStreamEvents } from '@/utils/streamEvents';
+import { readChatStream } from '@/utils/streamEvents';
 import {
   Brain,
   AlertTriangle,
@@ -259,22 +259,11 @@ Search & Web Tooling Guidelines:
       }]);
       setIsTyping(false);
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
       let assistantText = '';
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const events = parseStreamEvents(line);
-          for (const event of events) {
+      // Transport (fetch reader + line buffering) lives in readChatStream; this
+      // callback owns the coach-specific handling of each parsed event.
+      await readChatStream(response, async (event) => {
             try {
               if (event.type === 'text') {
                 assistantText += event.content;
@@ -338,9 +327,7 @@ Search & Web Tooling Guidelines:
             } catch {
               // Ignore event processing errors
             }
-          }
-        }
-      }
+      });
 
       // Safety net: if streaming ended but we got no content at all, show a fallback
       if (!assistantText) {

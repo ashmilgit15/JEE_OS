@@ -1,6 +1,7 @@
 'use client';
 
 import { createClient } from './client';
+import { seedQuestionsTable } from './seedQuestions';
 import type { StudyLog, RevisionItem, TestAttempt, TopicEvent, StudentProfile, Subject, MistakeEvent } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
 import { defaultSyllabus } from '@/data/syllabus';
@@ -27,8 +28,12 @@ export async function initSession(): Promise<string | null> {
     const { data: sessionData } = await supabase.auth.getSession();
     if (sessionData?.session?.user?.id) {
       const userId = sessionData.session.user.id;
-      if (!cachedId) localStorage.setItem(DEVICE_ID_KEY, userId);
+      // Always reconcile the cached device id with the live session. After a
+      // Google sign-in the uid may differ from the previous anonymous id; the
+      // store then syncs local state up to the authenticated user on next change.
+      if (cachedId !== userId) localStorage.setItem(DEVICE_ID_KEY, userId);
       await seedTopicsTable();
+      void seedQuestionsTable(); // fire-and-forget — no FK dependency, no need to block init
       return userId;
     }
 
@@ -52,6 +57,7 @@ export async function initSession(): Promise<string | null> {
     }, { onConflict: 'id', ignoreDuplicates: false });
 
     await seedTopicsTable();
+    void seedQuestionsTable(); // fire-and-forget — no FK dependency, no need to block init
 
     return userId;
   } catch {

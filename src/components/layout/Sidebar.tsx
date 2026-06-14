@@ -29,6 +29,7 @@ import { Separator } from '@/components/ui/separator';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store';
+import { SidebarAccount } from '@/components/auth/SidebarAccount';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -149,6 +150,9 @@ function SidebarContent({ collapsed, onCollapse }: { collapsed: boolean; onColla
           })}
         </nav>
       </ScrollArea>
+
+      {/* Account / auth */}
+      <SidebarAccount collapsed={collapsed} />
 
       {/* Collapse button */}
       {onCollapse && (

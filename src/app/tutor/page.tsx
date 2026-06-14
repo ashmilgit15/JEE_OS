@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useStore } from '@/store';
 import { handleStoreAction } from '@/utils/handleStoreAction';
-import { parseStreamEvents } from '@/utils/streamEvents';
+import { readChatStream } from '@/utils/streamEvents';
 import { FunctionGraph, extractGraphReferences } from '@/components/math/FunctionGraph';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -710,30 +710,15 @@ Tooling and search:
         console.warn('Failed to save user message:', e);
       }
 
-      if (!response.ok || !response.body) {
-        throw new Error('Chat completions request failed or returned empty body.');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
       let assistantText = '';
       let currentLogs: string[] = [];
       let currentSteps: string[] = [];
       let currentResults: any[] = [];
       let clientActionEmitted = false;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep trailing segment
-
-        for (const line of lines) {
-          const events = parseStreamEvents(line);
-          for (const event of events) {
+      // Transport (fetch reader + line buffering) lives in readChatStream; this
+      // callback owns the tutor-specific handling of each parsed event.
+      await readChatStream(response, async (event) => {
             try {
               switch (event.type) {
                 case 'text':
@@ -867,9 +852,7 @@ Tooling and search:
             } catch {
               // Ignore event processing errors
             }
-          }
-        }
-      }
+      });
 
       // Safety net: if streaming ended but we got no content at all, show a fallback
       // (skip when a client_action was emitted — the user will see the confirmation card)

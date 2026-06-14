@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useStore } from '@/store';
+import { useStore, useDispatch } from '@/store';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -216,7 +216,7 @@ function LaTeXDisplay({ latex, className }: { latex: string; className?: string 
 // ─── Formula Card Component ────────────────────────────────────────────────────
 
 function FormulaCardItem({ card, searchQuery }: { card: FormulaCard; searchQuery: string }) {
-  const { dispatch } = useStore();
+  const dispatch = useDispatch();
   const meta = SUBJECT_META[card.subject];
   const [showDerivation, setShowDerivation] = useState(false);
 
@@ -287,7 +287,7 @@ function FormulaCardItem({ card, searchQuery }: { card: FormulaCard; searchQuery
 // ─── Add Formula Form ──────────────────────────────────────────────────────────
 
 function AddFormulaForm({ onClose }: { onClose: () => void }) {
-  const { dispatch } = useStore();
+  const dispatch = useDispatch();
   const [title, setTitle] = useState('');
   const [latex, setLatex] = useState('');
   const [subject, setSubject] = useState<SubjectId>('physics');

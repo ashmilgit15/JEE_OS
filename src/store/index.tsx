@@ -20,6 +20,7 @@ import {
   chapterWeightage,
   PREREQUISITE_EDGES,
 } from '@/lib/learning';
+import { DispatchContext } from './DispatchContext';
 
 const STORAGE_KEY = 'jee-os-state';
 const STORAGE_VERSION_KEY = 'jee-os-state-version';
@@ -104,7 +105,7 @@ export const initialState: AppState = {
 };
 
 // Action types
-type Action =
+export type Action =
   | { type: 'SET_STATE'; payload: AppState }
   | { type: 'IMPORT_SYLLABUS'; payload: Subject[] }
   | { type: 'TOGGLE_TOPIC_EXCLUSION'; payload: { topicId: string } }
@@ -2353,9 +2354,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   ]);
 
   return (
-    <StoreContext.Provider value={contextValue}>
-      {children}
-    </StoreContext.Provider>
+    <DispatchContext.Provider value={dispatch}>
+      <StoreContext.Provider value={contextValue}>
+        {children}
+      </StoreContext.Provider>
+    </DispatchContext.Provider>
   );
 }
 
@@ -2364,3 +2367,14 @@ export function useStore() {
   if (!context) throw new Error('useStore must be used within StoreProvider');
   return context;
 }
+
+// Modular access layer. Prefer these in new code:
+//  - useDispatch(): stable dispatch only — never re-renders on state change.
+//  - selector hooks: narrow, intention-revealing slices of derived state.
+export { useDispatch } from './DispatchContext';
+export {
+  useReadiness,
+  useSubjectReadiness,
+  useWhatToStudyNext,
+  useSyllabusState,
+} from './selectors';

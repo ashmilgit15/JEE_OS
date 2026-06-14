@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useStore } from '@/store';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -20,43 +20,52 @@ import {
   ClipboardCheck,
   Clock,
   Play,
-  ChevronLeft,
-  ChevronRight,
-  Check,
-  X,
-  Trophy,
-  RotateCcw,
   Sparkles,
-  Brain,
   Paintbrush,
-  Eraser,
-  Trash2,
   AlertTriangle,
 } from 'lucide-react';
 import { TestQuestion, TestAttempt, SubjectId, Difficulty, ErrorType } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
 import { format, addDays } from 'date-fns';
-import { cleanMathText } from '@/utils/math-cleaner';
-import { renderInlineMath as renderInlineMathShared } from '@/utils/rendering';
 import { MARKING_SCHEME } from '@/lib/learning';
+import { Scratchpad } from '@/components/tests/Scratchpad';
+import { QuestionCard } from '@/components/tests/QuestionCard';
+import { TestResults } from '@/components/tests/TestResults';
 
 type TestMode = 'setup' | 'taking' | 'results';
 type TestType = 'topic' | 'chapter' | 'mixed' | 'daily';
 
-// The 60-question bank (~28 KB) is only needed once a test starts — load it
-// on demand instead of shipping it in the page's initial bundle.
+// The question bank is only needed once a test starts — load it on demand
+// instead of shipping it in the page's initial bundle. Source of truth is the
+// DB-backed /api/questions endpoint; if that is unreachable (offline, unseeded,
+// or no Supabase config) we fall back to the static bundled bank so tests still
+// work. Either way the result is cached for the session.
 let questionBankCache: TestQuestion[] | null = null;
+
+async function fetchAllFromApi(): Promise<TestQuestion[]> {
+  const PAGE = 200;
+  const all: TestQuestion[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const res = await fetch(`/api/questions?limit=${PAGE}&offset=${offset}`);
+    if (!res.ok) throw new Error(`questions api ${res.status}`);
+    const data = await res.json();
+    const batch: TestQuestion[] = data.questions ?? [];
+    all.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+  if (all.length === 0) throw new Error('questions api returned empty bank');
+  return all;
+}
+
 async function loadQuestionBank(): Promise<TestQuestion[]> {
-  if (!questionBankCache) {
+  if (questionBankCache) return questionBankCache;
+  try {
+    questionBankCache = await fetchAllFromApi();
+  } catch {
+    // Graceful degradation — bundle the static bank only when the API fails.
     questionBankCache = (await import('@/data/questions')).questionBank;
   }
   return questionBankCache;
-}
-
-// Test questions come from scraped/AI sources — normalize the math text first.
-function renderInlineMath(text: string): React.ReactNode {
-  if (typeof text !== 'string') return text;
-  return renderInlineMathShared(cleanMathText(text));
 }
 
 const ERROR_TYPES: { value: ErrorType; label: string }[] = [
@@ -67,169 +76,6 @@ const ERROR_TYPES: { value: ErrorType; label: string }[] = [
   { value: 'misread_question', label: 'Misread Question' },
   { value: 'guessing_error', label: 'Guessing Error' },
 ];
-
-function Scratchpad({ onClose }: { onClose: () => void }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const color = '#a78bfa'; // Primary color (violet-400)
-  const lineWidth = 3;
-  const [tool, setTool] = useState<'pen' | 'eraser'>('pen');
-  const lastX = useRef(0);
-  const lastY = useRef(0);
-
-  // Initialize canvas size and scale for high-DPI screens
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-
-    ctx.strokeStyle = color;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.lineWidth = lineWidth;
-  }, [color, lineWidth]);
-
-  // Handle drawing events
-  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    setIsDrawing(true);
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    
-    let clientX, clientY;
-    if ('touches' in e) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
-    }
-
-    lastX.current = clientX - rect.left;
-    lastY.current = clientY - rect.top;
-  };
-
-  const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const rect = canvas.getBoundingClientRect();
-    
-    let clientX, clientY;
-    if ('touches' in e) {
-      if (e.cancelable) e.preventDefault();
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
-    }
-
-    const currentX = clientX - rect.left;
-    const currentY = clientY - rect.top;
-
-    ctx.beginPath();
-    ctx.moveTo(lastX.current, lastY.current);
-    ctx.lineTo(currentX, currentY);
-    
-    if (tool === 'eraser') {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.strokeStyle = 'rgba(0,0,0,1)';
-      ctx.lineWidth = 20;
-    } else {
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
-    }
-    
-    ctx.stroke();
-
-    lastX.current = currentX;
-    lastY.current = currentY;
-  };
-
-  const stopDrawing = () => {
-    setIsDrawing(false);
-  };
-
-  const clearCanvas = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  };
-
-  return (
-    <Card className="fixed bottom-4 right-4 z-40 w-80 h-96 bg-zinc-900/95 border border-border shadow-2xl flex flex-col">
-      <CardHeader className="p-3 border-b border-border/50 flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-xs font-semibold flex items-center gap-1.5 text-foreground">
-          <Paintbrush className="h-3.5 w-3.5 text-primary" /> Scratchpad
-        </CardTitle>
-        <div className="flex items-center gap-1">
-          <Button
-            size="icon-xs"
-            variant={tool === 'pen' ? 'default' : 'ghost'}
-            onClick={() => setTool('pen')}
-            title="Pen"
-            aria-label="Pen tool"
-          >
-            <Paintbrush className="h-3 w-3" aria-hidden="true" />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant={tool === 'eraser' ? 'default' : 'ghost'}
-            onClick={() => setTool('eraser')}
-            title="Eraser"
-            aria-label="Eraser tool"
-          >
-            <Eraser className="h-3 w-3" aria-hidden="true" />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={clearCanvas}
-            title="Clear All"
-            aria-label="Clear scratchpad"
-            className="text-red-400 hover:text-red-300"
-          >
-            <Trash2 className="h-3 w-3" aria-hidden="true" />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={onClose}
-            title="Close"
-            aria-label="Close scratchpad"
-          >
-            <X className="h-3 w-3" />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="flex-1 p-0 relative overflow-hidden bg-zinc-950/40">
-        <canvas
-          ref={canvasRef}
-          onMouseDown={startDrawing}
-          onMouseMove={draw}
-          onMouseUp={stopDrawing}
-          onMouseLeave={stopDrawing}
-          onTouchStart={startDrawing}
-          onTouchMove={draw}
-          onTouchEnd={stopDrawing}
-          className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
-        />
-      </CardContent>
-    </Card>
-  );
-}
 
 export default function TestsPage() {
   // useSearchParams() requires a Suspense boundary so the page can be prerendered.
@@ -1167,53 +1013,15 @@ Provide:
           {/* Question Area */}
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-2xl mx-auto">
-              <div className="flex items-center gap-2 mb-4">
-                <Badge className="capitalize" variant="outline">{q.subject}</Badge>
-                <Badge variant="outline" className="capitalize">{q.difficulty.replace('_', ' ')}</Badge>
-              </div>
-
-              <h2 className="text-base font-medium mb-6 leading-relaxed">{renderInlineMath(q.question)}</h2>
-
-              <div className="space-y-3">
-                {q.options.map((opt, i) => (
-                  <button
-                    key={i}
-                    onClick={() => selectAnswer(i)}
-                    className={`w-full text-left rounded-lg border px-4 py-3 text-sm transition-all ${
-                      answers[currentQ] === i
-                        ? 'border-primary bg-primary/10 text-foreground'
-                        : 'border-border/50 bg-card hover:border-border hover:bg-muted/30'
-                    }`}
-                  >
-                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-current mr-3 text-xs">
-                      {String.fromCharCode(65 + i)}
-                    </span>
-                    {renderInlineMath(opt)}
-                  </button>
-                ))}
-              </div>
-
-              {/* Navigation */}
-              <div className="flex items-center justify-between mt-8">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentQ(Math.max(0, currentQ - 1))}
-                  disabled={currentQ === 0}
-                  className="gap-1"
-                >
-                  <ChevronLeft className="h-4 w-4" /> Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentQ(Math.min(questions.length - 1, currentQ + 1))}
-                  disabled={currentQ === questions.length - 1}
-                  className="gap-1"
-                >
-                  Next <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
+              <QuestionCard
+                question={q}
+                selectedIndex={answers[currentQ]}
+                onSelect={selectAnswer}
+                onPrev={() => setCurrentQ(Math.max(0, currentQ - 1))}
+                onNext={() => setCurrentQ(Math.min(questions.length - 1, currentQ + 1))}
+                isFirst={currentQ === 0}
+                isLast={currentQ === questions.length - 1}
+              />
             </div>
           </div>
 
@@ -1256,157 +1064,19 @@ Provide:
 
   // ======== RESULTS MODE ========
   return (
-    <div className="p-6 space-y-6 max-w-3xl mx-auto">
-      {/* Score Card */}
-      <Card className="bg-card border-border/50">
-        <CardContent className="p-6 text-center">
-          <Trophy className="h-10 w-10 mx-auto mb-3 text-amber-400" />
-          <h2 className="text-2xl font-bold">{score.marks}/{score.total}</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            {score.total > 0
-              ? Math.round((Math.max(score.marks, 0) / score.total) * 100)
-              : 0}% accuracy • {formatTime(timer)}
-          </p>
-          <div className="flex justify-center gap-4 mt-4">
-            <div className="text-center">
-              <p className="text-lg font-bold text-green-400">{score.correct}</p>
-              <p className="text-[10px] text-muted-foreground">Correct (+4)</p>
-            </div>
-            <div className="text-center">
-              <p className="text-lg font-bold text-red-400">{score.wrong}</p>
-              <p className="text-[10px] text-muted-foreground">Wrong (-1)</p>
-            </div>
-            <div className="text-center">
-              <p className="text-lg font-bold text-muted-foreground">{score.unanswered}</p>
-              <p className="text-[10px] text-muted-foreground">Skipped (0)</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* AI Test Strategist Diagnostic */}
-      <Card className="bg-card border-border/50 relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-3 opacity-15">
-          <Sparkles className="size-16 text-primary animate-pulse" />
-        </div>
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <Brain className="h-[18px] w-[18px] text-primary animate-pulse" />
-            <CardTitle className="text-sm font-semibold">AI Test Strategist Diagnostic</CardTitle>
-          </div>
-          <CardDescription className="text-xs">
-            Generate a personalized strategic review of this test attempt to improve your next score
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {!reportText && !isGeneratingReport ? (
-            <div className="flex flex-col items-center justify-center p-6 text-center border border-dashed border-border/40 rounded-lg bg-muted/10">
-              <Sparkles className="h-8 w-8 text-primary/40 mb-2" />
-              <p className="text-xs text-muted-foreground">Ready to analyze your attempt strategy, accuracy speed ratio, and cognitive error profiles.</p>
-              <Button size="sm" onClick={generateStrategyReport} className="mt-3 gap-1.5 cursor-pointer">
-                <Brain className="h-3.5 w-3.5" /> Generate AI Strategy Report
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="rounded-lg bg-zinc-950/70 border border-border/60 p-4 min-h-[120px] text-xs leading-relaxed font-sans text-zinc-300 whitespace-pre-line">
-                {renderInlineMath(reportText)}
-                {isGeneratingReport && (
-                  <span className="inline-block w-1.5 h-3.5 ml-1 bg-primary animate-pulse align-middle" />
-                )}
-              </div>
-              {isGeneratingReport && (
-                <div className="flex items-center gap-2 text-[10px] text-muted-foreground animate-pulse">
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary animate-ping"></span>
-                  Streaming strategist recommendations...
-                </div>
-              )}
-              {!isGeneratingReport && (
-                <div className="flex justify-end">
-                  <Button size="xs" variant="outline" onClick={generateStrategyReport} className="gap-1 cursor-pointer">
-                    <RotateCcw className="h-3 w-3" /> Regenerate Report
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Question Review */}
-      <Card className="bg-card border-border/50">
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Question Review</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {questions.map((q, i) => {
-            const isCorrect = answers[i] === q.correctAnswer;
-            const isUnanswered = answers[i] === null;
-            return (
-              <div key={q.id} className={`rounded-lg border p-4 ${isCorrect ? 'border-green-500/30 bg-green-500/5' : isUnanswered ? 'border-border/50' : 'border-red-500/30 bg-red-500/5'}`}>
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono text-muted-foreground">Q{i + 1}</span>
-                    {isCorrect ? (
-                      <Check className="h-4 w-4 text-green-400" />
-                    ) : isUnanswered ? (
-                      <span className="text-xs text-muted-foreground">Skipped</span>
-                    ) : (
-                      <X className="h-4 w-4 text-red-400" />
-                    )}
-                  </div>
-                  <Badge variant="outline" className="text-[10px] capitalize">{q.subject}</Badge>
-                </div>
-                <p className="text-sm mb-2">{renderInlineMath(q.question)}</p>
-                <div className="space-y-1 mb-2">
-                  {q.options.map((opt, oi) => (
-                    <div key={oi} className={`text-xs px-2 py-1 rounded ${
-                      oi === q.correctAnswer ? 'text-green-400 bg-green-500/10' :
-                      oi === answers[i] && oi !== q.correctAnswer ? 'text-red-400 bg-red-500/10' :
-                      'text-muted-foreground'
-                    }`}>
-                      {String.fromCharCode(65 + oi)}. {renderInlineMath(opt)}
-                      {oi === q.correctAnswer && ' ✓'}
-                      {oi === answers[i] && oi !== q.correctAnswer && ' (your answer)'}
-                    </div>
-                  ))}
-                </div>
-                <p className="text-xs text-muted-foreground italic mb-2">{renderInlineMath(q.explanation)}</p>
-
-                {/* Error Classification */}
-                {!isCorrect && !isUnanswered && (
-                  <div className="flex items-center gap-2 mt-2 pt-2 border-t border-border/30">
-                    <span className="text-[10px] text-muted-foreground">Error type:</span>
-                    <Select
-                      value={errors.find(e => e.questionIndex === i)?.errorType || ''}
-                      onValueChange={(v) => v && classifyError(i, v as ErrorType)}
-                    >
-                      <SelectTrigger className="h-7 text-[10px] w-40">
-                        <SelectValue placeholder="Classify..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ERROR_TYPES.map(et => (
-                          <SelectItem key={et.value} value={et.value} className="text-xs">{et.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </CardContent>
-      </Card>
-
-      {/* Actions */}
-      <div className="flex gap-3">
-        <Button onClick={saveResults} className="flex-1 gap-2">
-          <Check className="h-4 w-4" /> Save Results
-        </Button>
-        <Button variant="outline" onClick={() => setMode('setup')} className="gap-2">
-          <RotateCcw className="h-4 w-4" /> New Test
-        </Button>
-      </div>
-    </div>
+    <TestResults
+      score={score}
+      timer={timer}
+      formatTime={formatTime}
+      questions={questions}
+      answers={answers}
+      errors={errors}
+      reportText={reportText}
+      isGeneratingReport={isGeneratingReport}
+      onGenerateReport={generateStrategyReport}
+      onClassifyError={classifyError}
+      onSave={saveResults}
+      onNewTest={() => setMode('setup')}
+    />
   );
 }
