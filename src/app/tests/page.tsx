@@ -33,44 +33,30 @@ import {
   Trash2,
   AlertTriangle,
 } from 'lucide-react';
-import { questionBank } from '@/data/questions';
 import { TestQuestion, TestAttempt, SubjectId, Difficulty, ErrorType } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
 import { format, addDays } from 'date-fns';
-import katex from 'katex';
 import { cleanMathText } from '@/utils/math-cleaner';
+import { renderInlineMath as renderInlineMathShared } from '@/utils/rendering';
+import { MARKING_SCHEME } from '@/lib/learning';
 
 type TestMode = 'setup' | 'taking' | 'results';
 type TestType = 'topic' | 'chapter' | 'mixed' | 'daily';
 
+// The 60-question bank (~28 KB) is only needed once a test starts — load it
+// on demand instead of shipping it in the page's initial bundle.
+let questionBankCache: TestQuestion[] | null = null;
+async function loadQuestionBank(): Promise<TestQuestion[]> {
+  if (!questionBankCache) {
+    questionBankCache = (await import('@/data/questions')).questionBank;
+  }
+  return questionBankCache;
+}
+
+// Test questions come from scraped/AI sources — normalize the math text first.
 function renderInlineMath(text: string): React.ReactNode {
   if (typeof text !== 'string') return text;
-  const cleanedText = cleanMathText(text);
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let key = 0;
-  const regex = /\$\$(.+?)\$\$|\$(.+?)\$/g;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(cleanedText)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(cleanedText.slice(lastIndex, match.index));
-    }
-    const mathContent = match[1] || match[2];
-    const displayMode = !!match[1];
-    try {
-      const html = katex.renderToString(mathContent, { displayMode, throwOnError: false });
-      parts.push(<span key={key++} dangerouslySetInnerHTML={{ __html: html }} />);
-    } catch {
-      parts.push(match[0]);
-    }
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < cleanedText.length) {
-    parts.push(cleanedText.slice(lastIndex));
-  }
-  if (parts.length === 0) return cleanedText;
-  if (parts.length === 1 && typeof parts[0] === 'string') return parts[0];
-  return <>{parts}</>;
+  return renderInlineMathShared(cleanMathText(text));
 }
 
 const ERROR_TYPES: { value: ErrorType; label: string }[] = [
@@ -194,31 +180,35 @@ function Scratchpad({ onClose }: { onClose: () => void }) {
             variant={tool === 'pen' ? 'default' : 'ghost'}
             onClick={() => setTool('pen')}
             title="Pen"
+            aria-label="Pen tool"
           >
-            <Paintbrush className="h-3 w-3" />
+            <Paintbrush className="h-3 w-3" aria-hidden="true" />
           </Button>
           <Button
             size="icon-xs"
             variant={tool === 'eraser' ? 'default' : 'ghost'}
             onClick={() => setTool('eraser')}
             title="Eraser"
+            aria-label="Eraser tool"
           >
-            <Eraser className="h-3 w-3" />
+            <Eraser className="h-3 w-3" aria-hidden="true" />
           </Button>
           <Button
             size="icon-xs"
             variant="ghost"
             onClick={clearCanvas}
             title="Clear All"
+            aria-label="Clear scratchpad"
             className="text-red-400 hover:text-red-300"
           >
-            <Trash2 className="h-3 w-3" />
+            <Trash2 className="h-3 w-3" aria-hidden="true" />
           </Button>
           <Button
             size="icon-xs"
             variant="ghost"
             onClick={onClose}
             title="Close"
+            aria-label="Close scratchpad"
           >
             <X className="h-3 w-3" />
           </Button>
@@ -351,7 +341,7 @@ function TestsPageInner() {
   const [pendingAutoStart, setPendingAutoStart] = useState(false);
 
   // Generate test
-  const startTest = useCallback(() => {
+  const startTest = useCallback(async () => {
     setReportText('');
     setIsGeneratingReport(false);
     setStartError(null);
@@ -364,7 +354,7 @@ function TestsPageInner() {
     const dynamicCap = Math.min(questionCount, dynamicQuestions.length);
     const dynamicQs = dynamicQuestions.slice(0, dynamicCap);
 
-    let pool = [...questionBank];
+    let pool = [...await loadQuestionBank()];
 
     // Filter by subject — multi-subject array takes priority (used by AI tool),
     // falls back to the single-subject UI control.
@@ -756,10 +746,16 @@ Make questions that test conceptual understanding, not just formula recall. Incl
     });
   };
 
-  // Save results
+  // Save results. Marking values come from MARKING_SCHEME (src/lib/learning),
+  // applied per the question's subject so JEE Main vs Advanced schemes can differ.
   const saveResults = () => {
-    const score = questions.reduce((s, q, i) => s + (answers[i] === q.correctAnswer ? 4 : answers[i] !== null ? -1 : 0), 0);
-    const maxScore = questions.length * 4;
+    const score = questions.reduce((s, q, i) => {
+      const scheme = MARKING_SCHEME[q.subject] ?? MARKING_SCHEME.default;
+      if (answers[i] === q.correctAnswer) return s + scheme.correct;
+      if (answers[i] !== null) return s + scheme.wrong;
+      return s + scheme.unattempted;
+    }, 0);
+    const maxScore = questions.reduce((s, q) => s + (MARKING_SCHEME[q.subject] ?? MARKING_SCHEME.default).correct, 0);
 
     // Subject breakdown
     const subjectMap: Record<string, { correct: number; total: number; timeSpent: number }> = {};
@@ -834,19 +830,15 @@ Make questions that test conceptual understanding, not just formula recall. Incl
   // Calculate score
   const score = useMemo(() => {
     if (mode !== 'results') return { correct: 0, wrong: 0, unanswered: 0, marks: 0, total: 0 };
-    let correct = 0, wrong = 0, unanswered = 0;
+    let correct = 0, wrong = 0, unanswered = 0, marks = 0, total = 0;
     questions.forEach((q, i) => {
-      if (answers[i] === null) unanswered++;
-      else if (answers[i] === q.correctAnswer) correct++;
-      else wrong++;
+      const scheme = MARKING_SCHEME[q.subject] ?? MARKING_SCHEME.default;
+      total += scheme.correct;
+      if (answers[i] === null) { unanswered++; marks += scheme.unattempted; }
+      else if (answers[i] === q.correctAnswer) { correct++; marks += scheme.correct; }
+      else { wrong++; marks += scheme.wrong; }
     });
-    return {
-      correct,
-      wrong,
-      unanswered,
-      marks: correct * 4 - wrong * 1,
-      total: questions.length * 4,
-    };
+    return { correct, wrong, unanswered, marks, total };
   }, [mode, questions, answers]);
 
   const generateStrategyReport = async () => {

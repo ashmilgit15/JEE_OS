@@ -111,7 +111,7 @@ function SidebarContent({ collapsed, onCollapse }: { collapsed: boolean; onColla
 
       {/* Navigation */}
       <ScrollArea className="flex-1 py-3">
-        <nav className="flex flex-col gap-0.5 px-2">
+        <nav className="flex flex-col gap-0.5 px-2" aria-label="Main navigation">
           {navigation.map((item) => {
             const isActive = pathname === item.href;
             const badge = badgeMap[item.href] || 0;
@@ -157,9 +157,11 @@ function SidebarContent({ collapsed, onCollapse }: { collapsed: boolean; onColla
             onClick={onCollapse}
             data-testid="collapse-sidebar-btn"
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
             className="flex w-full items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
           >
-            <ChevronLeft className={cn('h-4 w-4 transition-transform', collapsed && 'rotate-180')} />
+            <ChevronLeft className={cn('h-4 w-4 transition-transform', collapsed && 'rotate-180')} aria-hidden="true" />
           </button>
         </div>
       )}
@@ -182,8 +184,9 @@ export default function Sidebar() {
                 variant="ghost"
                 size="icon"
                 className="h-9 w-9 text-muted-foreground hover:text-foreground cursor-pointer"
+                aria-label="Open navigation menu"
               >
-                <Menu className="h-5 w-5" />
+                <Menu className="h-5 w-5" aria-hidden="true" />
               </Button>
             }
           />

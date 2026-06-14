@@ -29,7 +29,9 @@ END $$;
 
 -- 2. TOPICS TABLE
 -- Reference data — all authenticated and anonymous users can read.
--- Seeding via upsert is allowed for any authenticated or anonymous user.
+-- Seeding only needs INSERT (the client seeds with ignoreDuplicates, i.e.
+-- ON CONFLICT DO NOTHING), so clients get insert-only access: existing rows
+-- can never be modified or deleted by users.
 create table if not exists public.topics (
     id text primary key, -- unique alphanumeric ID e.g. 'phy-mech-units'
     name text not null,
@@ -44,9 +46,13 @@ DO $$ BEGIN
     create policy "Anyone can read topics" on public.topics
       for select using (true);
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can upsert topics' AND tablename = 'topics') THEN
-    create policy "Anyone can upsert topics" on public.topics
-      for all using (true) with check (true);
+  -- Drop the legacy over-permissive policy (it allowed UPDATE/DELETE of shared reference data)
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can upsert topics' AND tablename = 'topics') THEN
+    drop policy "Anyone can upsert topics" on public.topics;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can insert topics' AND tablename = 'topics') THEN
+    create policy "Anyone can insert topics" on public.topics
+      for insert with check (true);
   END IF;
 END $$;
 
@@ -256,6 +262,81 @@ alter table public.ai_conversations enable row level security;
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can manage their own AI conversations' AND tablename = 'ai_conversations') THEN
     create policy "Users can manage their own AI conversations" on public.ai_conversations
+      for all using (auth.uid() = user_id);
+  END IF;
+END $$;
+
+-- 12. RATE LIMITS TABLE  (durable rate limiting for serverless)
+-- The in-memory token-bucket limiter resets on every cold start, so on
+-- serverless platforms it provides no real protection. This table backs an
+-- atomic, distributed limiter via the check_rate_limit() function below.
+create table if not exists public.rate_limits (
+    limiter_key text primary key,        -- e.g. '1.2.3.4:search'
+    count integer not null default 0,
+    window_start timestamp with time zone not null default timezone('utc'::text, now())
+);
+
+alter table public.rate_limits enable row level security;
+-- No client policies: this table is only ever touched by the SECURITY DEFINER
+-- function below, never directly by users.
+
+-- Atomically increment the bucket for `key` and return TRUE if the request is
+-- allowed (count within `max_requests` over `interval_secs`), FALSE otherwise.
+create or replace function public.check_rate_limit(
+    key text,
+    max_requests integer,
+    interval_secs integer
+) returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    current_count integer;
+    win_start timestamptz;
+    now_ts timestamptz := timezone('utc'::text, now());
+begin
+    insert into public.rate_limits as rl (limiter_key, count, window_start)
+        values (key, 1, now_ts)
+    on conflict (limiter_key) do update
+        set
+            count = case
+                when rl.window_start < now_ts - make_interval(secs => interval_secs)
+                then 1
+                else rl.count + 1
+            end,
+            window_start = case
+                when rl.window_start < now_ts - make_interval(secs => interval_secs)
+                then now_ts
+                else rl.window_start
+            end
+    returning rl.count, rl.window_start into current_count, win_start;
+
+    return current_count <= max_requests;
+end;
+$$;
+
+-- 13. AI MEMORY TABLE  (server-side shared memory for the AI tutor/coach)
+-- Replaces the localStorage-only MemoryStore, which could not run server-side.
+-- Relevance ranking is done in the app layer (cosine over content); add pgvector
+-- later for semantic recall if needed.
+create table if not exists public.ai_memory (
+    id uuid default gen_random_uuid() primary key,
+    user_id uuid references public.users(id) on delete cascade not null,
+    kind text not null,
+    content text not null,
+    tags text[] not null default '{}',
+    importance numeric(4,3) not null default 0.5,
+    source text not null default 'system',
+    access_count integer not null default 0,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists ai_memory_uid_idx on public.ai_memory(user_id, created_at desc);
+alter table public.ai_memory enable row level security;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can manage their own AI memory' AND tablename = 'ai_memory') THEN
+    create policy "Users can manage their own AI memory" on public.ai_memory
       for all using (auth.uid() = user_id);
   END IF;
 END $$;

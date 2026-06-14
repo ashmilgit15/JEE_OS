@@ -7,6 +7,7 @@ import { handleStoreAction } from '@/utils/handleStoreAction';
 import { getDeviceId, getContextSummaryFromState, formatContextSummary } from '@/utils/supabase/conversations';
 import { getDOMSummary } from '@/utils/domSummarizer';
 import { MemoryStore } from '@/utils/ai/memory';
+import { SUBJECT_TOKENS } from '@/lib/design/subjects';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -45,9 +46,9 @@ const typeLabels: Record<string, string> = {
 };
 
 const subjectColors: Record<string, string> = {
-  physics: '#6366f1',
-  chemistry: '#22c55e',
-  mathematics: '#f59e0b',
+  physics: SUBJECT_TOKENS.physics.hex,
+  chemistry: SUBJECT_TOKENS.chemistry.hex,
+  mathematics: SUBJECT_TOKENS.mathematics.hex,
   general: '#8b5cf6',
 };
 
@@ -727,8 +728,9 @@ Capabilities:
                     disabled={!chatInput.trim() || isTyping}
                     className="shrink-0 bg-primary text-primary-foreground hover:bg-primary/95"
                     size="icon"
+                    aria-label="Send message"
                   >
-                    <Send className="h-4 w-4" />
+                    <Send className="h-4 w-4" aria-hidden="true" />
                   </Button>
                 </div>
               </div>

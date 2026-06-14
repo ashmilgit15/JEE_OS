@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import type { SubjectId, StudyLog } from '@/types';
+import { parseOrdinalTopicQuery, resolveOrdinalPosition, chapterNameMatchesQuery } from '@/utils/topicMatcher';
 
 // ---------- constants ----------
 
@@ -546,6 +547,30 @@ export default function StudyLogPage() {
       topicName?: string;
       displayText: string;
     }> = [];
+
+    // Handle ordinal references for topics like "first topic of Mechanics" or "1st topic of Mechanics"
+    const ordinalQuery = parseOrdinalTopicQuery(query);
+    if (ordinalQuery) {
+      for (const subject of state.syllabus) {
+        for (const chapter of subject.chapters) {
+          if (chapterNameMatchesQuery(chapter.name, ordinalQuery.chapterQuery)) {
+            const index = resolveOrdinalPosition(ordinalQuery.position, chapter.topics.length);
+            if (index >= 0) {
+              const matchedTopic = chapter.topics[index];
+              suggestions.push({
+                type: 'topic',
+                subject: subject.id,
+                chapterId: chapter.id,
+                chapterName: chapter.name,
+                topicId: matchedTopic.id,
+                topicName: matchedTopic.name,
+                displayText: `🎯 (Resolved) ${chapter.name} → ${matchedTopic.name}`
+              });
+            }
+          }
+        }
+      }
+    }
 
     for (const subject of state.syllabus) {
       for (const chapter of subject.chapters) {

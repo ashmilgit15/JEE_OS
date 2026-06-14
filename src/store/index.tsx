@@ -1,13 +1,39 @@
 'use client';
 
-import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef, type ReactNode } from 'react';
-import { AppState, StudyLog, RevisionItem, TestAttempt, DailyPlan, StudentProfile, CoachInsight, Achievement, TopicStatus, SubjectId, PlanTask, MistakeEvent, AuditEvent, StudyResource, Flashcard, FormulaCard, FlashcardRating, Subject, ActiveTestState } from '@/types';
+import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
+import { AppState, StudyLog, RevisionItem, TestAttempt, DailyPlan, StudentProfile, CoachInsight, Achievement, TopicStatus, SubjectId, PlanTask, MistakeEvent, AuditEvent, StudyResource, Flashcard, FormulaCard, FlashcardRating, Subject, Chapter, Topic, ActiveTestState, TopicEvent } from '@/types';
 import { defaultSyllabus } from '@/data/syllabus';
 import { v4 as uuidv4 } from 'uuid';
 import { addDays, format, differenceInDays, parseISO } from 'date-fns';
-import { initSession, loadStudyLogs, loadRevisions, loadTestAttempts, loadUserTopicStatus, loadProfile, syncStudyLogs, syncRevisions, syncTestAttempts, syncTopicStatus, syncProfile, syncMistakes, loadMistakes } from '@/utils/supabase/sync';
+import { initSession, loadStudyLogs, loadRevisions, loadTestAttempts, loadUserTopicStatus, loadProfile, loadTopicEvents, syncStudyLogs, syncRevisions, syncTestAttempts, syncTopicStatus, syncProfile, syncMistakes, syncTopicEvents, loadMistakes } from '@/utils/supabase/sync';
+import {
+  forgettingProbability,
+  initialReviewLadder,
+  sm2,
+  accuracyToQuality,
+  SM2_DEFAULTS,
+  projectPerformance,
+  projectTrajectory,
+  scoreToPercentile,
+  JEE_MAX_SCORE,
+  READINESS_WEIGHTS,
+  chapterWeightage,
+  PREREQUISITE_EDGES,
+} from '@/lib/learning';
 
 const STORAGE_KEY = 'jee-os-state';
+const STORAGE_VERSION_KEY = 'jee-os-state-version';
+// Bump when the persisted AppState shape changes, and add a migration step in
+// migratePersistedState below. Version is stored under a separate key so the
+// state payload itself stays backward compatible.
+const STATE_SCHEMA_VERSION = 1;
+
+function migratePersistedState(parsed: any, fromVersion: number): any {
+  // v1 is the current shape — future migrations go here, e.g.:
+  // if (fromVersion < 2) { parsed.newField = defaultValue; }
+  void fromVersion;
+  return parsed;
+}
 
 // Default student profile
 const defaultProfile: StudentProfile = {
@@ -43,7 +69,7 @@ const defaultAchievements: Achievement[] = [
 ];
 
 // Initial state
-const initialState: AppState = {
+export const initialState: AppState = {
   syllabus: defaultSyllabus,
   resources: [],
   studyLogs: [],
@@ -117,7 +143,7 @@ type Action =
   | { type: 'CLEAR_ACTIVE_TEST' }
   | { type: 'RESET_STATE' };
 
-function reducer(state: AppState, action: Action): AppState {
+export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'SET_STATE':
       return action.payload;
@@ -423,7 +449,7 @@ function reducer(state: AppState, action: Action): AppState {
         }
       }
 
-      const newEvents: any[] = [];
+      const newEvents: TopicEvent[] = [];
       if (status !== oldStatus) {
         newEvents.push({
           id: uuidv4(),
@@ -523,8 +549,23 @@ function reducer(state: AppState, action: Action): AppState {
       };
     }
 
-    case 'ADD_REVISION':
-      return { ...state, revisions: [...state.revisions, action.payload] };
+    case 'ADD_REVISION': {
+      const newAudit: AuditEvent = {
+        id: uuidv4(),
+        timestamp: new Date().toISOString(),
+        category: 'revision',
+        action: 'ADD_REVISION',
+        entityId: action.payload.id,
+        entityName: action.payload.topicName,
+        newValue: action.payload,
+        source: 'manual',
+      };
+      return {
+        ...state,
+        revisions: [...state.revisions, action.payload],
+        auditLog: [newAudit, ...(state.auditLog || [])].slice(0, 500),
+      };
+    }
 
     case 'COMPLETE_REVISION': {
       const { topicId, revisionNumber } = action.payload;
@@ -553,42 +594,22 @@ function reducer(state: AppState, action: Action): AppState {
         }
       }
 
-      // Map accuracy/confidence to SM-2 quality (q: 0-5)
-      let q = 3;
-      if (accuracy >= 90) q = 5;
-      else if (accuracy >= 75) q = 4;
-      else if (accuracy >= 60) q = 3;
-      else if (accuracy >= 45) q = 2;
-      else if (accuracy >= 30) q = 1;
-      else q = 0;
+      // Map accuracy/confidence to SM-2 quality, then advance via the shared
+      // SM-2 scheduler (src/lib/learning/sm2.ts) — single source of truth.
+      const q = accuracyToQuality(accuracy, confidence);
 
-      if (confidence >= 4 && q < 5) q = Math.min(5, q + 1);
-      if (confidence <= 1 && q > 0) q = Math.max(0, q - 1);
-
-      // Fetch the revision item being completed
       const revItem = state.revisions.find(
         r => r.topicId === topicId && r.revisionNumber === revisionNumber
       );
-      
-      let easeFactor = revItem?.easeFactor ?? 2.5;
-      let intervalDays = revItem?.intervalDays ?? 1;
-      let repetitions = revItem?.repetitions ?? 0;
 
-      // Apply SM-2 formulas
-      if (q < 3) {
-        repetitions = 0;
-        intervalDays = 1;
-      } else {
-        if (repetitions === 0) {
-          intervalDays = 1;
-        } else if (repetitions === 1) {
-          intervalDays = 6;
-        } else {
-          intervalDays = Math.round(intervalDays * easeFactor);
-        }
-        repetitions += 1;
-      }
-      easeFactor = Math.max(1.3, easeFactor + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02));
+      const { easeFactor, intervalDays, repetitions } = sm2(
+        {
+          easeFactor: revItem?.easeFactor ?? SM2_DEFAULTS.easeFactor,
+          intervalDays: revItem?.intervalDays ?? SM2_DEFAULTS.intervalDays,
+          repetitions: revItem?.repetitions ?? SM2_DEFAULTS.repetitions,
+        },
+        q,
+      );
 
       const nextDueDate = format(addDays(new Date(), intervalDays), 'yyyy-MM-dd');
 
@@ -844,7 +865,7 @@ function reducer(state: AppState, action: Action): AppState {
       const { topicId, chapterId, subject, topicName, chapterName, completedDate } = action.payload;
       const baseDate = parseISO(completedDate);
 
-      // FSRS-inspired adaptive interval computation based on topic mastery
+      // Find current mastery signals for the topic.
       let accuracy = 70;
       let confidence = 1;
       for (const sub of state.syllabus) {
@@ -861,39 +882,24 @@ function reducer(state: AppState, action: Action): AppState {
       const topicRevisions = state.revisions.filter(r => r.topicId === topicId && r.completedDate);
       const recalls = topicRevisions.length;
       const logs = state.studyLogs.filter(l => l.topicId === topicId);
-      const totalHours = logs.reduce((sum, l) => sum + l.duration, 0) / 60;
+      const studyHours = logs.reduce((sum, l) => sum + l.duration, 0) / 60;
 
-      // Compute retention strength (0.1 to 5.0)
-      const confidenceScale = 0.5 + (confidence / 5) * 1.5;
-      const recallBoost = Math.pow(1.5, recalls);
-      const accuracyScale = 0.3 + (accuracy / 100) * 1.2;
-      const hourBoost = 1.0 + Math.sqrt(totalHours) * 0.3;
-      const strength = Math.min(5, Math.max(0.1, confidenceScale * recallBoost * accuracyScale * hourBoost));
+      // Intervals from the unified memory model (src/lib/learning/memory.ts) so
+      // the schedule agrees with the forgetting-probability shown to the user.
+      const ladder = initialReviewLadder({ accuracy, confidence, recalls, studyHours });
 
-      // Base interval in days; grows with strength
-      const baseInterval = Math.max(1, Math.round(2 * strength));
-      // Multiplier for exponential spacing: strong topics get wider gaps
-      const multiplier = Math.max(1.5, Math.min(4, 1.5 + strength * 0.4));
-
-      const intervals = [
-        baseInterval,
-        Math.round(baseInterval * multiplier),
-        Math.round(baseInterval * multiplier * multiplier),
-        strength > 2.5 ? Math.round(baseInterval * multiplier * multiplier * multiplier) : -1,
-      ].filter(i => i > 0);
-
-      const newRevisions: RevisionItem[] = intervals.map((days, i) => ({
+      const newRevisions: RevisionItem[] = ladder.map((daysFromBase, i) => ({
         id: uuidv4(),
         topicId,
         chapterId,
         subject,
         topicName,
         chapterName,
-        dueDate: format(addDays(baseDate, days), 'yyyy-MM-dd'),
+        dueDate: format(addDays(baseDate, daysFromBase), 'yyyy-MM-dd'),
         completedDate: null,
         revisionNumber: i + 1,
-        easeFactor: 2.5,
-        intervalDays: days,
+        easeFactor: SM2_DEFAULTS.easeFactor,
+        intervalDays: i === 0 ? daysFromBase : daysFromBase - ladder[i - 1],
         repetitions: 0,
       }));
 
@@ -921,7 +927,7 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, flashcards: (state.flashcards || []).filter(f => f.id !== action.payload) };
 
     case 'REVIEW_FLASHCARD': {
-      // SM-2 algorithm
+      // SM-2 via the shared scheduler (src/lib/learning/sm2.ts).
       const ratingMap: Record<string, number> = { again: 0, hard: 1, good: 3, easy: 5 };
       const q = ratingMap[action.payload.rating] ?? 3;
       const now = new Date().toISOString();
@@ -929,17 +935,10 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         flashcards: (state.flashcards || []).map(fc => {
           if (fc.id !== action.payload.id) return fc;
-          let { easeFactor, intervalDays, repetitions } = fc;
-          if (q < 3) {
-            repetitions = 0;
-            intervalDays = 1;
-          } else {
-            if (repetitions === 0) intervalDays = 1;
-            else if (repetitions === 1) intervalDays = 6;
-            else intervalDays = Math.round(intervalDays * easeFactor);
-            repetitions += 1;
-          }
-          easeFactor = Math.max(1.3, easeFactor + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02));
+          const { easeFactor, intervalDays, repetitions } = sm2(
+            { easeFactor: fc.easeFactor, intervalDays: fc.intervalDays, repetitions: fc.repetitions },
+            q,
+          );
           const nextReviewAt = format(addDays(new Date(), intervalDays), 'yyyy-MM-dd');
           return { ...fc, easeFactor, intervalDays, repetitions, lastReviewedAt: now, nextReviewAt };
         }),
@@ -1054,6 +1053,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initRef = useRef(false);
   const loadedRef = useRef(false);
+  // Holds the latest sync closure so the (once-registered) unload handler always
+  // flushes current state. Kept up to date by the effect below.
+  const flushSyncRef = useRef<() => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    flushSyncRef.current = async () => {
+      const uid = userIdRef.current;
+      if (!uid || !loadedRef.current) return;
+      // Run all syncs and surface (rather than swallow) any failures — a silent
+      // partial sync is how local and remote state drift apart.
+      const results = await Promise.allSettled([
+        syncTopicStatus(state.syllabus, uid),
+        syncStudyLogs(state.studyLogs, uid),
+        syncRevisions(state.revisions, uid),
+        syncTestAttempts(state.testAttempts, uid),
+        syncProfile(state.profile, uid),
+        syncMistakes(state.mistakes, uid),
+        syncTopicEvents(state.topicEvents, uid),
+      ]);
+      const labels = ['topic status', 'study logs', 'revisions', 'test attempts', 'profile', 'mistakes', 'topic events'];
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          console.warn(`Supabase sync failed for ${labels[i]} (will retry on next state change):`, r.reason);
+        }
+      });
+    };
+  });
 
   // Load from localStorage + Supabase on mount
   useEffect(() => {
@@ -1070,7 +1096,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       try {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
-          const parsed = JSON.parse(saved);
+          const savedVersion = Number(localStorage.getItem(STORAGE_VERSION_KEY) || '1');
+          const parsed = migratePersistedState(JSON.parse(saved), savedVersion);
           localState = {
             ...initialState,
             ...parsed,
@@ -1093,13 +1120,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Load from Supabase if session available
       if (uid) {
         try {
-          const [supabaseLogs, supabaseRevisions, supabaseTests, supabaseTopicStatus, supabaseProfile, supabaseMistakes] = await Promise.all([
+          const [supabaseLogs, supabaseRevisions, supabaseTests, supabaseTopicStatus, supabaseProfile, supabaseMistakes, supabaseTopicEvents] = await Promise.all([
             loadStudyLogs(uid),
             loadRevisions(uid),
             loadTestAttempts(uid),
             loadUserTopicStatus(uid),
             loadProfile(uid),
             loadMistakes(uid),
+            loadTopicEvents(uid),
           ]);
 
           const merged = localState ? { ...localState } : { ...initialState };
@@ -1135,6 +1163,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const localMistakeIds = new Set(merged.mistakes.map(m => m.id));
             const newMistakes = supabaseMistakes.filter(m => !localMistakeIds.has(m.id));
             merged.mistakes = [...merged.mistakes, ...newMistakes];
+          }
+
+          if (supabaseTopicEvents && supabaseTopicEvents.length > 0) {
+            const localEventIds = new Set((merged.topicEvents || []).map(e => e.id));
+            const newEvents = supabaseTopicEvents.filter(e => !localEventIds.has(e.id));
+            merged.topicEvents = [...newEvents, ...(merged.topicEvents || [])];
           }
 
           if (supabaseTopicStatus.length > 0 && !localState) {
@@ -1185,9 +1219,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!loadedRef.current) return;
     try {
+      localStorage.setItem(STORAGE_VERSION_KEY, String(STATE_SCHEMA_VERSION));
       const serialized = JSON.stringify(state);
       if (serialized.length > 3_500_000) {
-        console.warn('State is large (' + (serialized.length / 1024 / 1024).toFixed(1) + 'MB), trimming before save');
+        console.warn('State is large (' + (serialized.length / 1024 / 1024).toFixed(1) + 'MB). Trimming oldest logs/revisions/tests from localStorage — full history stays in Supabase if sync is active.');
         const trimmed = {
           ...state,
           resources: state.resources.slice(0, 20),
@@ -1233,28 +1268,49 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     debounceRef.current = setTimeout(() => {
-      syncTopicStatus(state.syllabus, uid);
-      syncStudyLogs(state.studyLogs, uid);
-      syncRevisions(state.revisions, uid);
-      syncTestAttempts(state.testAttempts, uid);
-      syncProfile(state.profile, uid);
-      syncMistakes(state.mistakes, uid);
-    }, 2000);
+      void flushSyncRef.current();
+    }, 2500);
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [state]);
 
-  const getTopicById = useCallback((topicId: string) => {
+  // Flush any pending sync immediately when the tab is hidden/closed, so the
+  // last edit isn't lost inside the 2.5s debounce window.
+  useEffect(() => {
+    const onLeave = () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      void flushSyncRef.current();
+    };
+    window.addEventListener('pagehide', onLeave);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') onLeave();
+    });
+    return () => {
+      window.removeEventListener('pagehide', onLeave);
+    };
+  }, []);
+
+  // Normalized O(1) topic lookup. Rebuilt only when the syllabus changes,
+  // instead of an O(n) triple-nested scan on every getTopicById call (which the
+  // engine functions invoke heavily, e.g. inside generateInsights loops).
+  const topicIndex = useMemo(() => {
+    const index = new Map<string, { topic: Topic; chapter: Chapter; subject: Subject }>();
     for (const subject of state.syllabus) {
       for (const chapter of subject.chapters) {
-        const topic = chapter.topics.find(t => t.id === topicId);
-        if (topic) return { topic, chapter, subject };
+        for (const topic of chapter.topics) {
+          index.set(topic.id, { topic, chapter, subject });
+        }
       }
     }
-    return null;
+    return index;
   }, [state.syllabus]);
+
+  const getTopicById = useCallback(
+    (topicId: string) => topicIndex.get(topicId) ?? null,
+    [topicIndex],
+  );
 
   const isItemHidden = useCallback((subjectId: SubjectId, chapterId?: string) => {
     if (state.hiddenSubjects.includes(subjectId)) return true;
@@ -1318,13 +1374,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ? (completedRevisions.length / subjectRevisions.length) * 100
       : 0;
 
-    // Weighted score
+    // Weighted score (weights centralised in src/lib/learning/config.ts)
     const readiness = (
-      completionScore * 0.30 +
-      confidenceScore * 0.20 +
-      testAccuracy * 0.25 +
-      revisionConsistency * 0.15 +
-      (stats.mastered / Math.max(stats.total, 1)) * 100 * 0.10
+      completionScore * READINESS_WEIGHTS.completion +
+      confidenceScore * READINESS_WEIGHTS.confidence +
+      testAccuracy * READINESS_WEIGHTS.testAccuracy +
+      revisionConsistency * READINESS_WEIGHTS.revisionConsistency +
+      (stats.mastered / Math.max(stats.total, 1)) * 100 * READINESS_WEIGHTS.mastery
     );
 
     return Math.round(Math.min(readiness, 100));
@@ -1509,33 +1565,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const now = new Date();
     const info = getTopicById(topicId);
     if (!info || info.topic.status === 'not_started') return 100;
-    
+
     const topic = info.topic;
     const lastDateStr = topic.lastRevision || topic.completedDate || state.studyLogs.filter(l => l.topicId === topicId)[0]?.date;
     if (!lastDateStr) return 50;
-    
+
     const lastDate = parseISO(lastDateStr);
     const daysSince = Math.max(0, differenceInDays(now, lastDate));
-    const topicRevisions = state.revisions.filter(r => r.topicId === topicId && r.completedDate);
-    const recalls = topicRevisions.length;
-    const logs = state.studyLogs.filter(l => l.topicId === topicId);
-    const totalMinutes = logs.reduce((sum, l) => sum + l.duration, 0);
-    const totalHours = totalMinutes / 60;
-    
-    const confidence = topic.confidence || 1;
-    const accuracy = (topic.accuracy || 50) / 100;
-    
-    const baseHalflife = 2.0;
-    const confidenceScale = 1.0 + confidence * 0.5;
-    const recallScale = Math.pow(1.8, recalls);
-    const accuracyScale = 0.5 + accuracy;
-    const hourScale = 1.0 + Math.sqrt(totalHours);
-    
-    const strength = baseHalflife * confidenceScale * recallScale * accuracyScale * hourScale;
-    const pRemember = Math.exp(-daysSince / strength);
-    const pForget = 1.0 - pRemember;
-    
-    return Math.round(pForget * 100);
+    const recalls = state.revisions.filter(r => r.topicId === topicId && r.completedDate).length;
+    const studyHours = state.studyLogs
+      .filter(l => l.topicId === topicId)
+      .reduce((sum, l) => sum + l.duration, 0) / 60;
+
+    // Unified memory model (src/lib/learning/memory.ts): the scheduler and this
+    // display now share one definition of memory strength.
+    return forgettingProbability({
+      confidence: topic.confidence || 1,
+      accuracy: topic.accuracy || 50,
+      recalls,
+      studyHours,
+      daysSince,
+    });
   }, [state.revisions, state.studyLogs, getTopicById]);
 
   const generateInsights = useCallback((): CoachInsight[] => {
@@ -1804,77 +1854,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const getExpectedJEEPerformance = useCallback(() => {
     const readiness = getOverallReadiness();
-    
-    let testAvgPercentage = 45; // default starting baseline (135/300)
-    if (state.testAttempts.length > 0) {
-      const sum = state.testAttempts.reduce((acc, t) => acc + (t.score / Math.max(t.maxScore, 1)), 0);
-      testAvgPercentage = (sum / state.testAttempts.length) * 100;
-    }
-    
-    // Weighted score: 40% readiness + 60% mock test history
-    const finalPercentage = state.testAttempts.length > 0 
-      ? (readiness * 0.4 + testAvgPercentage * 0.6) 
-      : readiness;
-    
-    let expectedScore = Math.round((finalPercentage / 100) * 300);
-    expectedScore = Math.max(0, Math.min(300, expectedScore));
-    
-    // Variance decreases with number of test attempts (min ±8)
-    const testCount = state.testAttempts.length;
-    const variance = Math.max(8, Math.round(15 - testCount * 0.5));
-    
-    // Smooth lookup score-to-percentile curve based on typical JEE statistics
-    const scoreToPercentile = (s: number) => {
-      const curve = [
-        { s: 300, p: 100 },
-        { s: 270, p: 99.95 },
-        { s: 250, p: 99.9 },
-        { s: 220, p: 99.7 },
-        { s: 200, p: 99.4 },
-        { s: 180, p: 98.2 },
-        { s: 160, p: 97.4 },
-        { s: 140, p: 96.0 },
-        { s: 120, p: 94.0 },
-        { s: 100, p: 91.0 },
-        { s: 80, p: 85.0 },
-        { s: 60, p: 75.0 },
-        { s: 40, p: 58.0 },
-        { s: 20, p: 30.0 },
-        { s: 0, p: 0 }
-      ];
-      if (s >= 300) return 100;
-      if (s <= 0) return 0;
-      for (let i = 0; i < curve.length - 1; i++) {
-        const high = curve[i];
-        const low = curve[i+1];
-        if (s <= high.s && s >= low.s) {
-          const ratio = (s - low.s) / (high.s - low.s);
-          return low.p + ratio * (high.p - low.p);
-        }
-      }
-      return 0;
-    };
-    
-    const percentile = Math.round(scoreToPercentile(expectedScore) * 10) / 10;
-    
-    // Target CSE NIT Trichy: Cutoff is roughly 99.8% or ~240 marks
-    const targetScore = 240;
-    const diff = targetScore - expectedScore;
-    const targetStatus = diff <= 0 ? 'Target Met!' : 'Target Pending';
-    const targetDiff = diff <= 0 ? 'cse_met' : `Need +${diff} marks`;
-    
+
+    // Grounded projection (src/lib/learning/scoring.ts): recency-weighted mock
+    // history + versioned NTA percentile curve + configurable target.
+    const proj = projectPerformance({
+      readiness,
+      testScoreFractions: state.testAttempts.map(t => t.score / Math.max(t.maxScore, 1)),
+      targetId: state.profile.aiPreferences?.targetId,
+    });
+
+    // Preserve the legacy return shape consumed by the analytics/coach pages.
     return {
-      expectedScore,
-      variance,
-      percentile,
-      targetDiff,
-      targetStatus,
-      bestCase: { score: Math.min(300, expectedScore + variance), percentile: Math.round(scoreToPercentile(Math.min(300, expectedScore + variance)) * 10) / 10 },
-      likelyCase: { score: expectedScore, percentile },
-      worstCase: { score: Math.max(0, expectedScore - variance), percentile: Math.round(scoreToPercentile(Math.max(0, expectedScore - variance)) * 10) / 10 },
-      confidenceLevel: (testCount >= 5 ? 'high' : testCount >= 2 ? 'medium' : 'low') as 'high' | 'medium' | 'low',
+      expectedScore: proj.expectedScore,
+      variance: proj.variance,
+      percentile: proj.percentile,
+      targetScore: proj.targetScore,
+      targetLabel: proj.targetLabel,
+      targetStatus: proj.targetMet ? 'Target Met!' : 'Target Pending',
+      targetDiff: proj.targetMet ? 'cse_met' : `Need +${proj.marksToTarget} marks`,
+      bestCase: proj.bestCase,
+      likelyCase: proj.likelyCase,
+      worstCase: proj.worstCase,
+      confidenceLevel: proj.confidenceLevel,
     };
-  }, [state.testAttempts, getOverallReadiness]);
+  }, [state.testAttempts, state.profile.aiPreferences, getOverallReadiness]);
 
   const getStudyTimeEfficiency = useCallback(() => {
     return (['physics', 'chemistry', 'mathematics'] as SubjectId[]).map(subId => {
@@ -2097,54 +2100,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const getRankTrajectories = useCallback(() => {
     const performance = getExpectedJEEPerformance();
     const currentPct = performance.percentile;
-    
-    const currentPath: number[] = [currentPct];
-    const optimalPath: number[] = [currentPct];
-    const correctedPath: number[] = [currentPct];
-    const degradingPath: number[] = [currentPct];
-    
-    for (let i = 1; i <= 5; i++) {
-      const currentDrift = currentPct + Math.sin(i * 0.5) * 0.1;
-      currentPath.push(Math.round(Math.min(99.9, currentDrift) * 100) / 100);
-      
-      const optimalDrift = currentPct + (i * 0.15) * (1.0 - (currentPct - 90) / 20);
-      optimalPath.push(Math.round(Math.min(99.95, optimalDrift) * 100) / 100);
-      
-      const correctedDrift = currentPct + (i * 0.22) * (1.0 - (currentPct - 90) / 20);
-      correctedPath.push(Math.round(Math.min(99.98, correctedDrift) * 100) / 100);
-      
-      const degradingDrift = currentPct - (i * 0.25);
-      degradingPath.push(Math.round(Math.max(10.0, degradingDrift) * 100) / 100);
-    }
-    
+
+    // Ground the projection in the student's actual recent mock percentiles
+    // (newest first) rather than a fixed sine wave (src/lib/learning/scoring.ts).
+    const recentPercentiles = state.testAttempts
+      .slice(0, 6)
+      .map(t => scoreToPercentile((t.score / Math.max(t.maxScore, 1)) * JEE_MAX_SCORE));
+
+    const proj = projectTrajectory(currentPct, recentPercentiles, 5);
+
+    // "corrected" = a scenario between current pace and optimal, retained for
+    // backward compatibility with the analytics/advanced charts.
+    const corrected = proj.current.map((c, i) => Math.round((c + (proj.optimal[i] - c) * 0.6) * 100) / 100);
+
     return {
-      current: currentPath,
-      optimal: optimalPath,
-      corrected: correctedPath,
-      degrading: degradingPath,
-      labels: ['Start', 'Mock 1', 'Mock 2', 'Mock 3', 'Mock 4', 'Mock 5'],
+      current: proj.current,
+      optimal: proj.optimal,
+      corrected,
+      degrading: proj.degrading,
+      labels: proj.labels,
     };
-  }, [getExpectedJEEPerformance]);
+  }, [state.testAttempts, getExpectedJEEPerformance]);
 
   const getDailyROIEngineTasks = useCallback(() => {
-    const weightageTable: Record<string, number> = {
-      'math-calc-differentiation': 4.0,
-      'math-calc-application-diff': 5.0,
-      'math-calc-definite': 5.0,
-      'math-alg-sets': 3.5,
-      'math-alg-matrices': 4.5,
-      'math-alg-probability': 4.5,
-      'phy-mech-newton': 4.5,
-      'phy-mech-rotation': 5.5,
-      'phy-elst-field': 5.0,
-      'phy-elst-capacitance': 4.0,
-      'phy-modern-semiconductor': 4.5,
-      'chem-basic-mole': 4.0,
-      'chem-equilibrium-ionic': 4.5,
-      'chem-organic-basic': 5.0,
-      'chem-org-aldehydes': 5.5,
-    };
-
     const priorities: {
       topicId: string;
       topicName: string;
@@ -2154,11 +2132,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       duration: number;
       action: string;
     }[] = [];
-    
+
     for (const sub of state.syllabus) {
       for (const ch of sub.chapters) {
         for (const t of ch.topics) {
-          const baseWeight = weightageTable[ch.id] || 3.0;
+          // Per-chapter JEE weightage (src/lib/learning/config.ts). The old
+          // inline table was keyed by topic id but looked up by chapter id, so
+          // every lookup silently fell back to the default 3.0.
+          const baseWeight = chapterWeightage(ch.id);
           let expectedGain = 1.0;
           let action = 'Study Core Theory';
           let duration = 60;
@@ -2230,21 +2211,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [state.syllabus]);
 
   const getPrerequisiteGaps = useCallback(() => {
-    const dependencies = [
-      { depId: 'math-calc-differentiability', prereqId: 'math-calc-limits', reason: 'Prerequisite: Differentiability requires complete understanding of Limit convergence.' },
-      { depId: 'math-calc-differentiation', prereqId: 'math-calc-differentiability', reason: 'Prerequisite: Differentiation methods build upon Differentiability rules.' },
-      { depId: 'math-calc-application-diff', prereqId: 'math-calc-differentiation', reason: 'Prerequisite: Application of Derivatives relies directly on differentiation calculations.' },
-      { depId: 'math-calc-definite', prereqId: 'math-calc-indefinite', reason: 'Prerequisite: Definite integrals require mastering antiderivative/indefinite integration.' },
-      { depId: 'math-calc-diffeq', prereqId: 'math-calc-differentiation', reason: 'Prerequisite: Differential Equations require calculating Derivatives and Integrals.' },
-      { depId: 'phy-mech-motion1d', prereqId: 'phy-mech-units', reason: 'Prerequisite: Kinematics relies on unit analysis and conversions.' },
-      { depId: 'phy-mech-motion2d', prereqId: 'phy-mech-motion1d', reason: 'Prerequisite: 2D vectors extend 1D straight-line projectile rules.' },
-      { depId: 'phy-mech-newton', prereqId: 'phy-mech-motion2d', reason: 'Prerequisite: Forces and NLM require vector acceleration equations.' },
-      { depId: 'phy-mech-workenergy', prereqId: 'phy-mech-newton', reason: 'Prerequisite: Work and Energy equations are derived from force vectors.' },
-      { depId: 'phy-mech-rotation', prereqId: 'phy-mech-workenergy', reason: 'Prerequisite: Rotational torque equations extend linear work-energy theorems.' },
-      { depId: 'chem-equilibrium-ionic', prereqId: 'chem-basic-mole', reason: 'Prerequisite: Ionic chemical constants build on concentration mole terms.' },
-      { depId: 'chem-electrochemistry-cells', prereqId: 'chem-equilibrium-ionic', reason: 'Prerequisite: Nernst potentials are calculated from chemical constants.' },
-    ];
-
     const alerts: {
       topicId: string;
       topicName: string;
@@ -2252,27 +2218,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dependentName: string;
       reason: string;
     }[] = [];
-    
-    dependencies.forEach(dep => {
-      const depInfo = getTopicById(dep.depId);
-      const preInfo = getTopicById(dep.prereqId);
-      
+
+    // Prerequisite graph lives in src/lib/learning/config.ts and is validated
+    // against the syllabus by an integrity test, so the ids can't silently rot
+    // (the old inline list referenced topic ids that no longer existed).
+    PREREQUISITE_EDGES.forEach(edge => {
+      const depInfo = getTopicById(edge.dependent);
+      const preInfo = getTopicById(edge.prerequisite);
+
       if (depInfo && preInfo) {
         const depStudied = depInfo.topic.status !== 'not_started';
         const preWeak = preInfo.topic.status === 'not_started' || preInfo.topic.accuracy < 60 || preInfo.topic.confidence < 3;
-        
+
         if (depStudied && preWeak) {
           alerts.push({
             topicId: preInfo.topic.id,
             topicName: preInfo.topic.name,
             dependentId: depInfo.topic.id,
             dependentName: depInfo.topic.name,
-            reason: dep.reason,
+            reason: edge.reason,
           });
         }
       }
     });
-    
+
     return alerts;
   }, [getTopicById]);
 
@@ -2304,7 +2273,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, [state.insights, state.testAttempts]);
 
-  const contextValue: StoreContextType = {
+  const toggleTopicExclusion = useCallback((topicId: string) => dispatch({ type: 'TOGGLE_TOPIC_EXCLUSION', payload: { topicId } }), [dispatch]);
+  const addResource = useCallback((resource: StudyResource) => dispatch({ type: 'ADD_RESOURCE', payload: resource }), []);
+  const removeResource = useCallback((id: string) => dispatch({ type: 'REMOVE_RESOURCE', payload: id }), []);
+  const toggleHiddenSubject = useCallback((subjectId: SubjectId) => dispatch({ type: 'TOGGLE_HIDDEN_SUBJECT', payload: subjectId }), [dispatch]);
+  const toggleHiddenChapter = useCallback((chapterId: string) => dispatch({ type: 'TOGGLE_HIDDEN_CHAPTER', payload: chapterId }), [dispatch]);
+
+  // Memoize the context value so consumers don't re-render just because the
+  // provider re-rendered — only when state (or a derived callback) changes.
+  const contextValue: StoreContextType = useMemo(() => ({
     state,
     dispatch,
     getTopicById,
@@ -2333,13 +2310,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     getPrerequisiteGaps,
     getMistakeReplayQuestions,
     getInsightCalibration,
-    toggleTopicExclusion: useCallback((topicId: string) => dispatch({ type: 'TOGGLE_TOPIC_EXCLUSION', payload: { topicId } }), [dispatch]),
-    addResource: useCallback((resource: StudyResource) => dispatch({ type: 'ADD_RESOURCE', payload: resource }), []),
-    removeResource: useCallback((id: string) => dispatch({ type: 'REMOVE_RESOURCE', payload: id }), []),
-    toggleHiddenSubject: useCallback((subjectId: SubjectId) => dispatch({ type: 'TOGGLE_HIDDEN_SUBJECT', payload: subjectId }), [dispatch]),
-    toggleHiddenChapter: useCallback((chapterId: string) => dispatch({ type: 'TOGGLE_HIDDEN_CHAPTER', payload: chapterId }), [dispatch]),
+    toggleTopicExclusion,
+    addResource,
+    removeResource,
+    toggleHiddenSubject,
+    toggleHiddenChapter,
     isItemHidden,
-  };
+  }), [
+    state,
+    getTopicById,
+    getSubjectStats,
+    getReadinessScore,
+    getOverallReadiness,
+    getTodayStudyHours,
+    getPendingRevisions,
+    getOverdueRevisions,
+    getTodaysRevisions,
+    getWeakTopics,
+    getStrongTopics,
+    generateDailyPlan,
+    generateInsights,
+    updateStreaks,
+    logStudy,
+    completeTopicWithRevisions,
+    getExpectedJEEPerformance,
+    getStudyTimeEfficiency,
+    getWhatToStudyNext,
+    getTopicForgettingProbability,
+    getBurnoutTelemetry,
+    getRankTrajectories,
+    getDailyROIEngineTasks,
+    getExamSimulationBreakdown,
+    getPrerequisiteGaps,
+    getMistakeReplayQuestions,
+    getInsightCalibration,
+    toggleTopicExclusion,
+    addResource,
+    removeResource,
+    toggleHiddenSubject,
+    toggleHiddenChapter,
+    isItemHidden,
+  ]);
 
   return (
     <StoreContext.Provider value={contextValue}>

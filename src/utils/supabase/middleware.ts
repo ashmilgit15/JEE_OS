@@ -1,8 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+import { env } from "@/lib/env";
 
 export const createClient = async (request: NextRequest) => {
   let supabaseResponse = NextResponse.next({
@@ -12,8 +10,8 @@ export const createClient = async (request: NextRequest) => {
   });
 
   const supabase = createServerClient(
-    supabaseUrl!,
-    supabaseKey!,
+    env.supabaseUrl,
+    env.supabasePublishableKey,
     {
       cookies: {
         getAll() {
@@ -32,8 +30,13 @@ export const createClient = async (request: NextRequest) => {
     },
   );
 
-  // Refresh session / validate auth
-  await supabase.auth.getUser();
+  // Refresh session / validate auth. The app signs users in anonymously on the
+  // client, so an invalid session is not a hard failure here — but it should be
+  // visible in logs instead of silently producing confusing RLS errors later.
+  const { error } = await supabase.auth.getUser();
+  if (error && error.name !== 'AuthSessionMissingError') {
+    console.warn('Session refresh failed in proxy:', error.message);
+  }
 
   return supabaseResponse
 };

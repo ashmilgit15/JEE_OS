@@ -428,8 +428,8 @@ export default function PeersPage() {
                     placeholder="Type a message… (Enter to send)"
                     className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
-                  <Button size="icon" onClick={sendMessage} className="shrink-0" disabled={!chatInput.trim()}>
-                    <Send className="size-4" />
+                  <Button size="icon" onClick={sendMessage} className="shrink-0" disabled={!chatInput.trim()} aria-label="Send message">
+                    <Send className="size-4" aria-hidden="true" />
                   </Button>
                 </div>
               </CardContent>

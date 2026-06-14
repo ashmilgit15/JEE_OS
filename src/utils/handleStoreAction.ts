@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { format } from 'date-fns';
 import type { AppState, DailyPlan, SubjectId, TopicStatus, PlanTask } from '@/types';
+import { parseOrdinalTopicQuery, resolveOrdinalPosition, chapterNameMatchesQuery } from '@/utils/topicMatcher';
 
 type Dispatch = (action: any) => void;
 
@@ -32,6 +33,21 @@ function findTopicByName(state: AppState, input: string): { topic: any; chapter:
   const clean = input.toLowerCase().trim();
   if (clean.length < 2) return null;
   const STOP = new Set(['it', 'the', 'a', 'an', 'is', 'are', 'my', 'your', 'this', 'that', 'topic', 'chapter', 'subject', 'all', 'every', 'each']);
+
+  // Handle ordinal references for topics like "first topic of Mechanics" or "1st topic of Mechanics"
+  const ordinalQuery = parseOrdinalTopicQuery(clean);
+  if (ordinalQuery) {
+    for (const sub of state.syllabus) {
+      for (const ch of sub.chapters) {
+        if (chapterNameMatchesQuery(ch.name, ordinalQuery.chapterQuery)) {
+          const index = resolveOrdinalPosition(ordinalQuery.position, ch.topics.length);
+          if (index >= 0) {
+            return { topic: ch.topics[index], chapter: ch, subject: sub };
+          }
+        }
+      }
+    }
+  }
 
   for (const sub of state.syllabus) {
     for (const ch of sub.chapters) {

@@ -1,4 +1,4 @@
-import { MemoryStore } from './memory';
+import type { MemoryLike } from './memoryTypes';
 
 export const toolSchemas = [
 
@@ -356,7 +356,7 @@ export const toolSchemas = [
     }
   },
   ];
-export async function executeServerTool(name: string, args: any, memory: MemoryStore) {
+export async function executeServerTool(name: string, args: any, memory: MemoryLike) {
   if (name === 'remember') {
     const tags = Array.isArray(args.tags) ? args.tags : [];
     await memory.add(args.observation, 'observation', 'system', tags);

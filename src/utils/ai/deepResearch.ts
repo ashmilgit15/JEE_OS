@@ -1,4 +1,4 @@
-import { MemoryStore } from './memory';
+import type { MemoryLike } from './memoryTypes';
 
 interface ResearchFinding {
   query: string;
@@ -60,7 +60,7 @@ export async function executeDeepResearch(
   query: string,
   tavilyKey: string,
   onProgress?: (status: string) => void,
-  memory?: MemoryStore,
+  memory?: MemoryLike,
 ): Promise<DeepResearchResult> {
   const findings: ResearchFinding[] = [];
   const allSources: Set<string> = new Set();

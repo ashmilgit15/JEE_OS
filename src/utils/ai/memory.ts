@@ -1,5 +1,7 @@
 'use client';
 
+import type { MemoryLike } from './memoryTypes';
+
 export type MemoryType = 'observation' | 'preference' | 'pattern' | 'fact' | 'mistake' | 'interaction_summary' | 'skill_estimate';
 export type MemorySource = 'user' | 'ai_tutor' | 'ai_coach' | 'ai_copilot' | 'system' | 'test_engine';
 
@@ -57,7 +59,7 @@ function cosineSimilarity(a: string, b: string): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-export class MemoryStore {
+export class MemoryStore implements MemoryLike {
   private cache: Memory[] = [];
   private loaded = false;
 

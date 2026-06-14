@@ -4,14 +4,14 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useStore } from '@/store';
 import { usePathname, useRouter } from 'next/navigation';
 import { getDeviceId, getContextSummaryFromState, formatContextSummary } from '@/utils/supabase/conversations';
-import katex from 'katex';
-import DOMPurify from 'isomorphic-dompurify';
 import { getDOMSummary } from '@/utils/domSummarizer';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-import { extractGraphReferences, FunctionGraph } from '@/app/tutor/page';
+import { extractGraphReferences, FunctionGraph } from '@/components/math/FunctionGraph';
+import { renderInlineMath as renderInlineMathShared } from '@/utils/rendering';
+import { parseStreamEvents } from '@/utils/streamEvents';
 import {
   Bot,
   Send,
@@ -30,76 +30,9 @@ interface ChatMessage {
   statusLogs?: string[];
 }
 
-function renderInlineMath(text: string): React.ReactNode {
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let key = 0;
-  const regex = /\$\$(.+?)\$\$|\$(.+?)\$/g;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
-    }
-    const mathContent = match[1] || match[2];
-    const displayMode = !!match[1];
-    try {
-      const cleanMath = DOMPurify.sanitize(mathContent);
-      const html = katex.renderToString(cleanMath, { displayMode, throwOnError: false });
-      parts.push(<span key={key++} dangerouslySetInnerHTML={{ __html: html }} />);
-    } catch {
-      parts.push(match[0]);
-    }
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-  if (parts.length === 0) return text;
-  if (parts.length === 1 && typeof parts[0] === 'string') return parts[0];
-  return <>{parts}</>;
-}
+// Copilot renders untrusted streamed content — keep DOMPurify on the math source.
+const renderInlineMath = (text: string) => renderInlineMathShared(text, { sanitize: true });
 
-// Helper to parse stream line robustly, handling multiple or malformed JSON blocks
-function parseStreamEvents(line: string): any[] {
-  const trimmed = line.trim();
-  if (!trimmed) return [];
-
-  try {
-    return [JSON.parse(trimmed)];
-  } catch {
-    // Attempt to extract multiple JSON objects using brace counting
-    try {
-      const objects: any[] = [];
-      let braceCount = 0;
-      let startIdx = -1;
-
-      for (let i = 0; i < trimmed.length; i++) {
-        if (trimmed[i] === '{') {
-          if (braceCount === 0) startIdx = i;
-          braceCount++;
-        } else if (trimmed[i] === '}') {
-          braceCount--;
-          if (braceCount === 0 && startIdx !== -1) {
-            const potentialJSON = trimmed.substring(startIdx, i + 1);
-            try {
-              objects.push(JSON.parse(potentialJSON));
-            } catch {
-              // Ignore
-            }
-            startIdx = -1;
-          }
-        }
-      }
-
-      if (objects.length > 0) {
-        return objects;
-      }
-            } catch {
-      // Ignore fallback failure
-    }
-    return [];
-  }
-}
 
 import { handleStoreAction } from '@/utils/handleStoreAction';
 import { MemoryStore } from '@/utils/ai/memory';
@@ -597,6 +530,8 @@ Guidelines:
               : "h-12 px-4 rounded-full bg-zinc-950/90 hover:bg-zinc-900/90 text-white flex items-center gap-2.5 backdrop-blur-md"
           }`}
           title="Ask AI Co-Pilot"
+          aria-label={isOpen ? 'Close AI Co-Pilot' : 'Open AI Co-Pilot'}
+          aria-expanded={isOpen}
         >
           {isOpen ? (
             <X className="h-6 w-6 text-white mx-auto" />
@@ -642,8 +577,9 @@ Guidelines:
               size="icon"
               className="h-7 w-7 text-zinc-500 hover:text-white rounded-md"
               onClick={() => setIsOpen(false)}
+              aria-label="Close AI Co-Pilot"
             >
-              <X className="h-4 w-4" />
+              <X className="h-4 w-4" aria-hidden="true" />
             </Button>
           </CardHeader>
 
@@ -694,7 +630,7 @@ Guidelines:
             )}
 
             {/* Messages Scroll Area */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4" aria-live="polite" aria-label="AI Co-Pilot conversation">
               {messages.map((message) => (
                 <div
                   key={message.id}
@@ -809,8 +745,9 @@ Guidelines:
                   size="icon"
                   className="h-9 w-9 shrink-0 bg-zinc-900 border-white/5 text-zinc-400 hover:text-white rounded-lg p-0 cursor-pointer"
                   title="Upload image for OCR scan"
+                  aria-label="Upload image for OCR scan"
                 >
-                  <ImageIcon className="h-4 w-4" />
+                  <ImageIcon className="h-4 w-4" aria-hidden="true" />
                 </Button>
                 <Input
                   value={chatInput}
@@ -825,8 +762,9 @@ Guidelines:
                   disabled={!chatInput.trim() || isTyping || isOcrProcessing}
                   className="h-9 w-9 shrink-0 bg-purple-600 hover:bg-purple-700 text-white rounded-lg p-0 cursor-pointer"
                   size="icon"
+                  aria-label="Send message"
                 >
-                  <Send className="h-3.5 w-3.5" />
+                  <Send className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
               </div>
             </div>

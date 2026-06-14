@@ -3,13 +3,16 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useStore } from '@/store';
 import { CoachInsight, SubjectId } from '@/types';
+import { SUBJECT_LABEL, SUBJECT_TOKENS } from '@/lib/design/subjects';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { extractGraphReferences, FunctionGraph } from '@/app/tutor/page';
+import { extractGraphReferences, FunctionGraph } from '@/components/math/FunctionGraph';
+import { renderInlineMath } from '@/utils/rendering';
+import { parseStreamEvents } from '@/utils/streamEvents';
 import {
   Brain,
   AlertTriangle,
@@ -29,7 +32,6 @@ import {
 import { usePathname, useRouter } from 'next/navigation';
 import { startOfWeek, isAfter, parseISO } from 'date-fns';
 import Link from 'next/link';
-import katex from 'katex';
 import { createClient } from '@/utils/supabase/client';
 import { getDeviceId, getContextSummaryFromState, formatContextSummary, saveMessage } from '@/utils/supabase/conversations';
 import { getDOMSummary } from '@/utils/domSummarizer';
@@ -38,33 +40,6 @@ import { handleStoreAction } from '@/utils/handleStoreAction';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-function renderInlineMath(text: string): React.ReactNode {
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let key = 0;
-  const regex = /\$\$(.+?)\$\$|\$(.+?)\$/g;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
-    }
-    const mathContent = match[1] || match[2];
-    const displayMode = !!match[1];
-    try {
-      const html = katex.renderToString(mathContent, { displayMode, throwOnError: false });
-      parts.push(<span key={key++} dangerouslySetInnerHTML={{ __html: html }} />);
-    } catch {
-      parts.push(match[0]);
-    }
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-  if (parts.length === 0) return text;
-  if (parts.length === 1 && typeof parts[0] === 'string') return parts[0];
-  return <>{parts}</>;
-}
 
 const insightIcon: Record<CoachInsight['type'], string> = {
   revision_reminder: '🔄',
@@ -86,22 +61,17 @@ const insightActionLink: Record<CoachInsight['type'], string> = {
   forgetting_alert: '/advanced',
 };
 
-const subjectLabel: Record<SubjectId, string> = {
-  physics: 'Physics',
-  chemistry: 'Chemistry',
-  mathematics: 'Mathematics',
-};
-
+// Subject tokens are centralised in src/lib/design/subjects.ts
+const subjectLabel = SUBJECT_LABEL;
 const subjectColor: Record<SubjectId, string> = {
-  physics: 'text-blue-400',
-  chemistry: 'text-emerald-400',
-  mathematics: 'text-amber-400',
+  physics: SUBJECT_TOKENS.physics.text,
+  chemistry: SUBJECT_TOKENS.chemistry.text,
+  mathematics: SUBJECT_TOKENS.mathematics.text,
 };
-
 const subjectBarColor: Record<SubjectId, string> = {
-  physics: 'bg-blue-500',
-  chemistry: 'bg-emerald-500',
-  mathematics: 'bg-amber-500',
+  physics: SUBJECT_TOKENS.physics.bar,
+  chemistry: SUBJECT_TOKENS.chemistry.bar,
+  mathematics: SUBJECT_TOKENS.mathematics.bar,
 };
 
 const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
@@ -128,41 +98,6 @@ function priorityBorder(priority: CoachInsight['priority']) {
   }
 }
 
-function parseStreamEvents(line: string): any[] {
-  const trimmed = line.trim();
-  if (!trimmed) return [];
-
-  try {
-    return [JSON.parse(trimmed)];
-  } catch {
-    try {
-      const objects: any[] = [];
-      let braceCount = 0;
-      let startIdx = -1;
-
-      for (let i = 0; i < trimmed.length; i++) {
-        if (trimmed[i] === '{') {
-          if (braceCount === 0) startIdx = i;
-          braceCount++;
-        } else if (trimmed[i] === '}') {
-          braceCount--;
-          if (braceCount === 0 && startIdx !== -1) {
-            const potentialJSON = trimmed.substring(startIdx, i + 1);
-            try {
-              objects.push(JSON.parse(potentialJSON));
-            } catch {
-              // Ignore invalid sub-blocks
-            }
-            startIdx = -1;
-          }
-        }
-      }
-      return objects;
-    } catch {
-      return [];
-    }
-  }
-}
 
 // ── Component ───────────────────────────────────────────────────────
 
@@ -709,8 +644,8 @@ Search & Web Tooling Guidelines:
                                 </div>
                                 <div className="flex shrink-0 items-center gap-3">
                                   <Link href={insightActionLink[insight.type]}>
-                                    <Button variant="ghost" size="icon-xs" className="text-zinc-500 hover:text-purple-400">
-                                      <ArrowRight className="h-3.5 w-3.5" />
+                                    <Button variant="ghost" size="icon-xs" className="text-zinc-500 hover:text-purple-400" aria-label="View related page">
+                                      <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                                     </Button>
                                   </Link>
                                   <Button
@@ -718,8 +653,9 @@ Search & Web Tooling Guidelines:
                                     size="icon-xs"
                                     className="text-zinc-600 hover:text-zinc-300"
                                     onClick={() => handleDismiss(insight.id)}
+                                    aria-label="Dismiss insight"
                                   >
-                                    <X className="h-3.5 w-3.5" />
+                                    <X className="h-3.5 w-3.5" aria-hidden="true" />
                                   </Button>
                                 </div>
                               </div>
@@ -1102,8 +1038,9 @@ Search & Web Tooling Guidelines:
                       disabled={!chatInput.trim() || isTyping}
                       className="shrink-0 bg-purple-600 hover:bg-purple-700 text-white"
                       size="icon"
+                      aria-label="Send message"
                     >
-                      <Send className="h-4 w-4" />
+                      <Send className="h-4 w-4" aria-hidden="true" />
                     </Button>
                   </div>
                 </div>
