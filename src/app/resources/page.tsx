@@ -363,7 +363,7 @@ Capabilities:
               let actionExecuted = false;
               handleStoreAction(event.action, event.args, { dispatch, getTopicById, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router, onActionResult: (executed) => { actionExecuted = executed; } });
               const actionDesc = !actionExecuted
-                ? `🚫 Action cancelled: ${event.action}`
+                ? `🚫 Action not executed: ${event.action}`
                 : event.args.topicName
                   ? `✅ **${event.args.topicName}** marked as **${event.args.status}** in your syllabus tracker!`
                   : `✅ Action completed: ${event.action}`;

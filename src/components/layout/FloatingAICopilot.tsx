@@ -399,7 +399,7 @@ Guidelines:
                 handleStoreAction(event.action, event.args, { dispatch, getTopicById, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router, onActionResult: (executed) => { actionExecuted = executed; } });
                 let actionDesc = actionExecuted
                   ? `✅ Action completed: ${event.action}`
-                  : `🚫 Action cancelled: ${event.action}`;
+                  : `🚫 Action not executed: ${event.action}`;
                 if (actionExecuted && event.action === 'update_topic_status' && event.args.topicName) {
                   actionDesc = `✅ **${event.args.topicName}** marked as **${event.args.status}** in your syllabus tracker!`;
                 } else if (actionExecuted && event.action === 'generate_flashcards') {
