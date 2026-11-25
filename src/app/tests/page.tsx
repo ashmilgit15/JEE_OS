@@ -303,7 +303,9 @@ function TestsPageInner() {
     if (!Array.isArray(input)) return [];
     return input.filter((q: any) => {
       if (!q || typeof q !== 'object') return false;
-      const options = Array.isArray(q.options) ? q.options.map((o: any) => String(o).trim()) : [];
+      const rawOptions = Array.isArray(q.options) ? q.options : [];
+      if (!rawOptions.every((o: any) => typeof o === 'string')) return false;
+      const options = rawOptions.map((o: string) => o.trim());
       const lower = options.map((o: string) => o.toLowerCase());
       return typeof q.question === 'string' && q.question.trim().length >= 15
         && options.length === 4
@@ -420,6 +422,7 @@ Make questions that test conceptual understanding, not just formula recall. Incl
     const dqKeyParam = searchParams.get('dqKey');
 
     let didApply = false;
+    let invalidDynamicQuestions = false;
     const validDifficulties: Difficulty[] = ['easy', 'medium', 'jee_main', 'jee_advanced'];
     const validTestTypes: TestType[] = ['topic', 'chapter', 'mixed', 'daily'];
 
@@ -504,6 +507,7 @@ Make questions that test conceptual understanding, not just formula recall. Incl
     }
 
     if (dqKeyParam) {
+      let loadedValidDynamicQuestions = false;
       try {
         const raw = sessionStorage.getItem(dqKeyParam);
         if (raw) {
@@ -514,15 +518,19 @@ Make questions that test conceptual understanding, not just formula recall. Incl
             if (parsed.source) setDynamicSource(parsed.source);
             if (parsed.title && !titleParam) setCustomTitle(parsed.title.slice(0, 80));
             sessionStorage.removeItem(dqKeyParam);
-            didApply = true;
+            loadedValidDynamicQuestions = true;
           }
         }
       } catch (e) {
         console.warn('Failed to load dynamic questions from sessionStorage:', e);
       }
+      if (!loadedValidDynamicQuestions) {
+        invalidDynamicQuestions = true;
+        setStartError('The AI-generated questions were missing or invalid, so the generated test was not started. Use the question bank or generate questions again.');
+      }
     }
 
-    if (didApply) {
+    if (didApply && !invalidDynamicQuestions) {
       urlParamsConsumed.current = true;
       // Defer the auto-start signal to the NEXT render. The setState calls
       // above are batched; by the time setPendingAutoStart is processed
