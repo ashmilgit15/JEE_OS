@@ -1071,8 +1071,8 @@ Your accuracy rate of **${accuracy}** indicates your current level of preparatio
       sendEvent({
         type: 'text',
         content: statusCandidate === 'not_started'
-          ? `I've prepared a reset for **${topic.name}** (${topic.subject}) to **not started**. Confirm the action prompt to apply it; you can pick the topic back up anytime from the **Syllabus Tracker**.`
-          : `I've prepared a syllabus update for **${topic.name}** (${topic.subject}) to **${statusCandidate}**. Confirm the action prompt to apply it; revision scheduling will be created only after you confirm.`
+          ? `\n\nRequested change: reset **${topic.name}** (${topic.subject}) to **not started**. It is applied only if you approve the action.`
+          : `\n\nRequested change: mark **${topic.name}** (${topic.subject}) as **${statusCandidate}**. It is applied, and revisions are scheduled, only if you approve the action.`
       });
       return;
     } else {
