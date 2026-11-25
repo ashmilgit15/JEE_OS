@@ -360,10 +360,13 @@ Capabilities:
               }
             }
             if (event.type === 'client_action') {
-              handleStoreAction(event.action, event.args, { dispatch, getTopicById, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router });
-              const actionDesc = event.args.topicName
-                ? `✅ **${event.args.topicName}** marked as **${event.args.status}** in your syllabus tracker!`
-                : `✅ Action completed: ${event.action}`;
+              let actionExecuted = false;
+              handleStoreAction(event.action, event.args, { dispatch, getTopicById, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router, onActionResult: (executed) => { actionExecuted = executed; } });
+              const actionDesc = !actionExecuted
+                ? `🚫 Action cancelled: ${event.action}`
+                : event.args.topicName
+                  ? `✅ **${event.args.topicName}** marked as **${event.args.status}** in your syllabus tracker!`
+                  : `✅ Action completed: ${event.action}`;
               assistantText += `\n\n${actionDesc}`;
               hasReceivedContent = true;
               setIsTyping(false);

@@ -1,6 +1,7 @@
 'use client';
 
 import { createClient } from './client';
+import { env } from '@/lib/env';
 import type { User } from '@supabase/supabase-js';
 
 // Google OAuth + session helpers for the browser.
@@ -46,6 +47,7 @@ export function toAuthUser(user: User | null): AuthUser | null {
 }
 
 export async function getAuthUser(): Promise<AuthUser | null> {
+  if (!env.supabaseConfigured) return null;
   try {
     const { data } = await getClient().auth.getUser();
     return toAuthUser(data.user ?? null);
@@ -56,16 +58,26 @@ export async function getAuthUser(): Promise<AuthUser | null> {
 
 // Subscribe to auth changes. Returns an unsubscribe function.
 export function onAuthChange(cb: (user: AuthUser | null) => void): () => void {
-  const { data } = getClient().auth.onAuthStateChange((_event, session) => {
-    cb(toAuthUser(session?.user ?? null));
-  });
-  return () => data.subscription.unsubscribe();
+  if (!env.supabaseConfigured) {
+    cb(null);
+    return () => {};
+  }
+  try {
+    const { data } = getClient().auth.onAuthStateChange((_event, session) => {
+      cb(toAuthUser(session?.user ?? null));
+    });
+    return () => data.subscription.unsubscribe();
+  } catch {
+    cb(null);
+    return () => {};
+  }
 }
 
 // Kick off Google sign-in. Triggers a browser redirect to Google and back to
 // /auth/callback. Resolves with an error message only if the request could not
 // be initiated (the happy path navigates away before resolving).
 export async function signInWithGoogle(): Promise<{ error?: string }> {
+  if (!env.supabaseConfigured) return { error: 'Cloud sign-in is not configured. The app is running in local-only mode.' };
   const supabase = getClient();
   const redirectTo = `${window.location.origin}/auth/callback`;
 

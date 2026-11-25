@@ -299,6 +299,33 @@ function TestsPageInner() {
   }, [subject, subjects, topicIds, chapterIds, difficulty, questionCount, testType, getWeakTopics, aiAdaptiveMode, getMistakeReplayQuestions, dynamicQuestions, customTitle, dispatch]);
 
   // ── AI Question Generation ─────────────────────────────────────────
+  const sanitizeGeneratedQuestions = (input: unknown): TestQuestion[] => {
+    if (!Array.isArray(input)) return [];
+    return input.filter((q: any) => {
+      if (!q || typeof q !== 'object') return false;
+      const options = Array.isArray(q.options) ? q.options.map((o: any) => String(o).trim()) : [];
+      const lower = options.map((o: string) => o.toLowerCase());
+      return typeof q.question === 'string' && q.question.trim().length >= 15
+        && options.length === 4
+        && options.every((o: string) => o.length > 0 && !/^option\s*[a-d\d]+$/i.test(o) && !['none of the above', 'all of the above'].includes(o.toLowerCase()))
+        && new Set(lower).size === 4
+        && Number.isInteger(q.correctAnswer) && q.correctAnswer >= 0 && q.correctAnswer <= 3
+        && typeof q.explanation === 'string' && q.explanation.trim().length >= 10;
+    }).map((q: any, i: number) => ({
+      ...q,
+      id: q.id || `ai-q-${Date.now()}-${i}`,
+      question: q.question.trim(),
+      options: q.options.map((o: any) => String(o).trim()),
+      explanation: q.explanation.trim(),
+      topicId: q.topicId || '',
+      chapterId: q.chapterId || '',
+      subject: q.subject || (subject === 'all' ? 'mathematics' : subject),
+      difficulty: q.difficulty || difficulty,
+      type: 'mcq',
+      source: q.source || 'AI Generated',
+    }));
+  };
+
   const generateAIQuestions = useCallback(async () => {
     setIsGeneratingAIQuestions(true);
     setStartError(null);
@@ -362,10 +389,11 @@ Make questions that test conceptual understanding, not just formula recall. Incl
       // Extract JSON array from the response
       const jsonMatch = fullText.match(/\[[\s\S]*\]/);
       if (!jsonMatch) throw new Error('No valid JSON found in response');
-      const parsed = JSON.parse(jsonMatch[0]) as TestQuestion[];
-      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('No questions generated');
+      const parsed = JSON.parse(jsonMatch[0]) as unknown;
+      const validQuestions = sanitizeGeneratedQuestions(parsed);
+      if (validQuestions.length === 0) throw new Error('No valid questions generated');
 
-      setDynamicQuestions(parsed);
+      setDynamicQuestions(validQuestions);
       setDynamicSource('AI Generated');
     } catch (err) {
       console.error('AI question generation error:', err);
@@ -480,8 +508,9 @@ Make questions that test conceptual understanding, not just formula recall. Incl
         const raw = sessionStorage.getItem(dqKeyParam);
         if (raw) {
           const parsed = JSON.parse(raw) as { questions: TestQuestion[]; source?: string; title?: string };
-          if (Array.isArray(parsed.questions) && parsed.questions.length > 0) {
-            setDynamicQuestions(parsed.questions);
+          const validQuestions = sanitizeGeneratedQuestions(parsed.questions);
+          if (validQuestions.length > 0) {
+            setDynamicQuestions(validQuestions);
             if (parsed.source) setDynamicSource(parsed.source);
             if (parsed.title && !titleParam) setCustomTitle(parsed.title.slice(0, 80));
             sessionStorage.removeItem(dqKeyParam);

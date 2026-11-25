@@ -287,10 +287,13 @@ Search & Web Tooling Guidelines:
                     // sessionStorage may not be available; fall through
                   }
                 }
-                handleStoreAction(event.action, event.args, { dispatch, getTopicById, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router });
-                const actionDesc = event.args.topicName
-                  ? `\n\n✅ **${event.args.topicName}** marked as **${event.args.status}** in your syllabus tracker!`
-                  : `\n\n✅ Action completed: ${event.action}`;
+                let actionExecuted = false;
+                handleStoreAction(event.action, event.args, { dispatch, getTopicById, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router, onActionResult: (executed) => { actionExecuted = executed; } });
+                const actionDesc = !actionExecuted
+                  ? `\n\n🚫 Action cancelled: ${event.action}`
+                  : event.args.topicName
+                    ? `\n\n✅ **${event.args.topicName}** marked as **${event.args.status}** in your syllabus tracker!`
+                    : `\n\n✅ Action completed: ${event.action}`;
                 assistantText += actionDesc;
                 setMessages(prev => prev.map(m => m.id === coachMsgId ? { ...m, content: assistantText } : m));
               }

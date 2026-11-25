@@ -16,6 +16,7 @@ export interface StoreActionDeps {
   router: any;
   /** Set true only when the caller already showed its own confirmation UI. */
   skipActionConfirmation?: boolean;
+  onActionResult?: (executed: boolean) => void;
 }
 
 // Model/tool output is untrusted, especially after web or document search.
@@ -185,6 +186,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
 
   if (!deps.skipActionConfirmation && USER_CONFIRMED_ACTIONS.has(action) && !confirmAiAction(action, args)) {
     console.warn(`[AI Action] ${action} cancelled by user`);
+    deps.onActionResult?.(false);
     return;
   }
 
@@ -666,5 +668,9 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
 
     default:
       console.warn('[AI Action] Unknown action:', action);
+      deps.onActionResult?.(false);
+      return;
   }
+
+  deps.onActionResult?.(true);
 }
