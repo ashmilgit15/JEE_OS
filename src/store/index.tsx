@@ -11,6 +11,7 @@ import {
   initialReviewLadder,
   sm2,
   accuracyToQuality,
+  ratingToQuality,
   SM2_DEFAULTS,
   projectPerformance,
   projectTrajectory,
@@ -928,9 +929,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, flashcards: (state.flashcards || []).filter(f => f.id !== action.payload) };
 
     case 'REVIEW_FLASHCARD': {
-      // SM-2 via the shared scheduler (src/lib/learning/sm2.ts).
-      const ratingMap: Record<string, number> = { again: 0, hard: 1, good: 3, easy: 5 };
-      const q = ratingMap[action.payload.rating] ?? 3;
+      // SM-2 via the shared scheduler and shared rating scale.
+      const q = ratingToQuality(action.payload.rating);
       const now = new Date().toISOString();
       return {
         ...state,

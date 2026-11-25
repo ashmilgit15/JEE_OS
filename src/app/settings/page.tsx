@@ -26,6 +26,7 @@ import {
   Calculator,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { deleteAllUserData } from '@/utils/supabase/sync';
 
 export default function SettingsPage() {
   const [mounted, setMounted] = useState(false);
@@ -137,11 +138,14 @@ export default function SettingsPage() {
     reader.readAsText(file);
   };
 
-  const handleClearAllData = () => {
+  const handleClearAllData = async () => {
     if (confirm('⚠️ WARNING: This will permanently DELETE all study logs, streaks, completed revisions, test history, and reset your syllabus completion to 0. Are you absolutely sure?')) {
       if (confirm('Final confirmation: Are you completely sure you want to reset everything? This cannot be undone.')) {
+        const remoteDeleted = await deleteAllUserData();
         dispatch({ type: 'RESET_STATE' });
-        alert('All local state has been reset to defaults.');
+        alert(remoteDeleted
+          ? 'All local and cloud-synced state has been reset to defaults.'
+          : 'Local state has been reset. Cloud sync was unavailable or no remote data was deleted.');
       }
     }
   };

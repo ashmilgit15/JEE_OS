@@ -335,7 +335,8 @@ export const toolSchemas = [
           options: { type: "array", items: { type: "string" }, description: "Optional: the 4 MCQ options if applicable." },
           correctAnswer: { type: "number", description: "Optional: 0-3 index of the correct option." },
           userAnswer: { type: "number", description: "Optional: 0-3 index of the incorrect option the user picked." },
-          explanation: { type: "string", description: "The explanation of the correct solution." }
+          explanation: { type: "string", description: "The explanation of the correct solution." },
+          errorType: { type: "string", enum: ["concept_gap", "formula_forgotten", "calculation_mistake", "time_pressure", "misread_question", "guessing_error"], description: "Optional cognitive cause of the mistake." }
         },
         required: ["topicName", "questionText", "explanation"]
       }

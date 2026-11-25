@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**JEE OS** — A Next.js 16.2.7 + React 19.2.4 application for JEE (Joint Entrance Examination) preparation. Features include AI tutor/coach, syllabus tracking, question bank, analytics, revisions planner, flashcards, mock tests, and study logging.
+**JEE OS** — A Next.js 16.4.6 + React 19.2.4 application for JEE (Joint Entrance Examination) preparation. Features include AI tutor/coach, syllabus tracking, question bank, analytics, revisions planner, flashcards, mock tests, and study logging.
 
 **Stack:** Next.js App Router, Tailwind v4 (CSS-first), `@base-ui/react` (NOT Radix), Supabase SSR, Hack Club AI Proxy, Tavily search.
 
-**Important:** This Next.js version (16.2.7) has breaking changes from older versions — APIs, conventions, and file structure may differ from training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing Next.js-specific code. Heed deprecation notices.
+**Important:** This Next.js version has breaking changes from older versions — APIs, conventions, and file structure may differ from training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing Next.js-specific code. Heed deprecation notices.
 
 ## Commands
 
@@ -21,7 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `npx playwright test` | E2E tests in `e2e/` (requires dev server running on :3000 — no `webServer` in config) |
 | `npx playwright test e2e/routes.spec.ts` | Run a single e2e spec |
 
-No unit test runner — only Playwright e2e (config: `playwright.config.ts`, chromium only).
+`npm test` runs Vitest unit tests; Playwright e2e uses `playwright.config.ts` (chromium only).
 
 ## Architecture
 

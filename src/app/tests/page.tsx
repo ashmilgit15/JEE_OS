@@ -121,7 +121,7 @@ function TestsPageInner() {
   const [showScratchpad, setShowScratchpad] = useState(false);
 
   // Results state
-  const [errors, setErrors] = useState<{ questionIndex: number; errorType: ErrorType }[]>([]);
+  const [errors, setErrors] = useState<{ questionIndex: number; errorType: ErrorType; mistakePath?: string }[]>([]);
   const [reportText, setReportText] = useState('');
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
@@ -648,9 +648,13 @@ Make questions that test conceptual understanding, not just formula recall. Incl
         const topicName = syllabusTopic?.topicName || q.topicId;
         const chapterName = syllabusTopic?.chapterName || q.chapterId;
         const subject = syllabusTopic?.subject || q.subject;
+        const errorRecord = errors.find(e => e.questionIndex === i);
+        const mistakePath = errorRecord?.mistakePath || q.mistakePath || `${subject} -> ${chapterName} -> ${topicName}`;
         dispatch({
           type: 'ADD_MISTAKE',
           payload: {
+            errorType: errorRecord?.errorType || 'concept_gap',
+            mistakePath,
             id: uuidv4(),
             questionId: q.id,
             questionText: q.question,

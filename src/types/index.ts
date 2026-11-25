@@ -204,6 +204,8 @@ export interface MistakeEvent {
   timestamp: string;
   status: 'pending' | 'resolved';
   nextReplayDate: string; // ISO format string
+  errorType?: ErrorType;
+  mistakePath?: string;
 }
 
 export interface StudyResource {

@@ -1,10 +1,9 @@
 'use client';
 
 import { createClient } from './client';
-import { seedQuestionsTable } from './seedQuestions';
 import type { StudyLog, RevisionItem, TestAttempt, TopicEvent, StudentProfile, Subject, MistakeEvent } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
-import { defaultSyllabus } from '@/data/syllabus';
+import { env } from '@/lib/env';
 
 const DEVICE_ID_KEY = 'jee-os-device-id';
 
@@ -32,8 +31,6 @@ export async function initSession(): Promise<string | null> {
       // Google sign-in the uid may differ from the previous anonymous id; the
       // store then syncs local state up to the authenticated user on next change.
       if (cachedId !== userId) localStorage.setItem(DEVICE_ID_KEY, userId);
-      await seedTopicsTable();
-      void seedQuestionsTable(); // fire-and-forget — no FK dependency, no need to block init
       return userId;
     }
 
@@ -56,59 +53,9 @@ export async function initSession(): Promise<string | null> {
       study_style: 'visual',
     }, { onConflict: 'id', ignoreDuplicates: false });
 
-    await seedTopicsTable();
-    void seedQuestionsTable(); // fire-and-forget — no FK dependency, no need to block init
-
     return userId;
   } catch {
     return cachedId || null;
-  }
-}
-
-// ─── Topic Seeding (Bug 5 fix) ─────────────────────────────────────────
-// Populates the `topics` table from defaultSyllabus if it's empty.
-// Runs on session init so FK constraints on user_topic_status don't fail.
-async function seedTopicsTable(): Promise<void> {
-  try {
-    const supabase = getClient();
-    const { data: existing, error: selectErr } = await supabase.from('topics').select('id').limit(1);
-    if (selectErr) {
-      console.warn('Cannot check topics table — skipping seed. Run supabase_schema.sql:', selectErr.message);
-      return;
-    }
-    if (existing && existing.length > 0) return;
-
-    const records: { id: string; name: string; subject: string; chapter_id: string; chapter_name: string }[] = [];
-    for (const sub of defaultSyllabus) {
-      for (const ch of sub.chapters) {
-        for (const t of ch.topics) {
-          records.push({
-            id: t.id,
-            name: t.name,
-            subject: sub.id,
-            chapter_id: ch.id,
-            chapter_name: ch.name,
-          });
-        }
-      }
-    }
-
-    if (records.length > 0) {
-      // 100-row chunks to stay under Supabase request size limits
-      const chunkSize = 100;
-      for (let i = 0; i < records.length; i += chunkSize) {
-        const chunk = records.slice(i, i + chunkSize);
-        const { error } = await supabase
-          .from('topics')
-          .upsert(chunk, { onConflict: 'id', ignoreDuplicates: true });
-        if (error) {
-          console.warn('seedTopicsTable chunk failed (missing RLS policy?):', error.message || error);
-          break;
-        }
-      }
-    }
-  } catch (e) {
-    console.error('seedTopicsTable error:', e);
   }
 }
 
@@ -185,23 +132,10 @@ export async function loadUserTopicStatus(userId: string): Promise<{ topic_id: s
 export async function syncStudyLogs(logs: StudyLog[], userId: string): Promise<void> {
   const supabase = getClient();
   try {
-    // Delete any study logs that are not in the local list
-    const localIds = logs.map(l => l.id).filter(Boolean);
-    if (localIds.length > 0) {
-      const { error: deleteError } = await supabase
-        .from('study_logs')
-        .delete()
-        .eq('user_id', userId)
-        .not('id', 'in', `(${localIds.join(',')})`);
-      if (deleteError) throw deleteError;
-    } else {
-      const { error: deleteError } = await supabase
-        .from('study_logs')
-        .delete()
-        .eq('user_id', userId);
-      if (deleteError) throw deleteError;
-    }
-
+    // Upsert-only: local state is intentionally trimmed when large and may
+    // also be stale on a second device, so it must never be treated as a
+    // complete authoritative list of remote rows. Explicit resets use the
+    // dedicated delete helpers in this file.
     if (logs.length === 0) return;
 
     // Ensure every record has a stable id for upsert onConflict
@@ -320,23 +254,8 @@ export async function syncRevisions(revisions: RevisionItem[], userId: string): 
   try {
     if (!(await ensureRevisionTable(supabase))) return;
 
-    // Delete any revision tasks that are not in the local list
-    const localIds = revisions.map(r => r.id).filter(Boolean);
-    if (localIds.length > 0) {
-      const { error: deleteError } = await supabase
-        .from('revision_tasks')
-        .delete()
-        .eq('user_id', userId)
-        .not('id', 'in', `(${localIds.join(',')})`);
-      if (deleteError) throw deleteError;
-    } else {
-      const { error: deleteError } = await supabase
-        .from('revision_tasks')
-        .delete()
-        .eq('user_id', userId);
-      if (deleteError) throw deleteError;
-    }
-
+    // Upsert-only for the same multi-device/local-trimming reasons documented
+    // in syncStudyLogs. Scoped resets explicitly delete affected rows instead.
     if (revisions.length === 0) return;
     function buildRecords() {
       return revisions.map(rev => {
@@ -432,23 +351,8 @@ export async function loadRevisions(userId: string): Promise<RevisionItem[]> {
 export async function syncTestAttempts(attempts: TestAttempt[], userId: string): Promise<void> {
   const supabase = getClient();
   try {
-    // Delete any test attempts that are not in the local list
-    const localIds = attempts.map(a => a.id).filter(Boolean);
-    if (localIds.length > 0) {
-      const { error: deleteError } = await supabase
-        .from('test_attempts')
-        .delete()
-        .eq('user_id', userId)
-        .not('id', 'in', `(${localIds.join(',')})`);
-      if (deleteError) throw deleteError;
-    } else {
-      const { error: deleteError } = await supabase
-        .from('test_attempts')
-        .delete()
-        .eq('user_id', userId);
-      if (deleteError) throw deleteError;
-    }
-
+    // Upsert-only: missing local rows do not imply that the user deleted the
+    // corresponding remote attempts.
     if (attempts.length === 0) return;
     const records = attempts.map(a => ({
       id: a.id,
@@ -686,22 +590,8 @@ export async function loadProfile(userId: string): Promise<Partial<StudentProfil
 export async function syncMistakes(mistakes: MistakeEvent[], userId: string): Promise<void> {
   const supabase = getClient();
   try {
-    const localIds = mistakes.map(m => m.id).filter(Boolean);
-    if (localIds.length > 0) {
-      const { error: deleteError } = await supabase
-        .from('mistake_events')
-        .delete()
-        .eq('user_id', userId)
-        .not('id', 'in', `(${localIds.join(',')})`);
-      if (deleteError) throw deleteError;
-    } else {
-      const { error: deleteError } = await supabase
-        .from('mistake_events')
-        .delete()
-        .eq('user_id', userId);
-      if (deleteError) throw deleteError;
-    }
-
+    // Upsert-only: missing local rows do not imply remote deletion. Mistakes
+    // are normally resolved rather than deleted; full reset uses explicit deletion.
     if (mistakes.length === 0) return;
 
     const records = mistakes.map(m => ({
@@ -715,8 +605,8 @@ export async function syncMistakes(mistakes: MistakeEvent[], userId: string): Pr
       explanation: m.explanation || '',
       status: m.status || 'pending',
       next_replay_date: m.nextReplayDate,
-      error_type: 'concept_gap',
-      mistake_path: `${m.subject || 'physics'} -> ${m.chapterName || 'General'} -> ${m.topicName || 'General'}`,
+      error_type: m.errorType || 'concept_gap',
+      mistake_path: m.mistakePath || `${m.subject || 'physics'} -> ${m.chapterName || 'General'} -> ${m.topicName || 'General'}`,
     }));
 
     const chunkSize = 50;
@@ -764,10 +654,65 @@ export async function loadMistakes(userId: string): Promise<MistakeEvent[]> {
         timestamp: r.created_at,
         status: r.status as 'pending' | 'resolved',
         nextReplayDate: r.next_replay_date,
+        errorType: r.error_type,
+        mistakePath: r.mistake_path,
       };
     });
   } catch (e) {
     console.error('Failed to load mistakes:', e);
     return [];
+  }
+}
+
+// ─── Explicit destructive maintenance operations ────────────────────────────
+// Routine synchronization is deliberately upsert-only. Remote rows are deleted
+// only when the user explicitly requests a reset, never merely because a row is
+// absent from a trimmed/stale local copy.
+
+async function getCurrentUserId(): Promise<string | null> {
+  if (!env.supabaseConfigured || typeof window === 'undefined') return null;
+  try {
+    const { data } = await getClient().auth.getUser();
+    return data.user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Delete every application-owned row for the current user. */
+export async function deleteAllUserData(): Promise<boolean> {
+  const userId = await getCurrentUserId();
+  if (!userId) return false;
+
+  try {
+    const supabase = getClient();
+    // Deleting the public profile row cascades through user_topic_status,
+    // study_logs, revision_tasks, test_attempts, mistake_events, topic_events,
+    // readiness_snapshots, ai_conversations and ai_memory via their FKs.
+    const { error } = await supabase.from('users').delete().eq('id', userId);
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error('Failed to delete remote user data:', e);
+    return false;
+  }
+}
+
+/** Delete revision tasks for an explicitly reset set of topics. */
+export async function deleteRevisionsForTopics(topicIds: string[]): Promise<void> {
+  const ids = Array.from(new Set(topicIds.filter(Boolean)));
+  if (ids.length === 0) return;
+  const userId = await getCurrentUserId();
+  if (!userId) return;
+
+  try {
+    const { error } = await getClient()
+      .from('revision_tasks')
+      .delete()
+      .eq('user_id', userId)
+      .in('topic_id', ids);
+    if (error) throw error;
+  } catch (e) {
+    console.warn('Failed to delete remote revision tasks for reset topics:', e);
   }
 }

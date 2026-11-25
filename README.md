@@ -1,36 +1,87 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# JEE OS
 
-## Getting Started
+AI-assisted JEE preparation workspace with syllabus mastery tracking, spaced revision, flashcards, mistake replay, mock tests, analytics, resources, peer presence, and streaming AI tutor/coach/copilot agents.
 
-First, run the development server:
+## Stack
+
+- Next.js App Router + React + TypeScript
+- Tailwind CSS v4 with CSS-first theme configuration
+- `@base-ui/react` component primitives
+- Supabase SSR auth, Postgres persistence, and Realtime presence
+- Hack Club AI proxy for streaming LLM responses
+- Tavily for optional web/textbook research
+- Vitest for unit tests and Playwright for E2E tests
+
+## Local setup
+
+Prerequisite: Node.js 22+ is recommended.
+
+```bash
+npm ci
+cp .env.example .env.local
+npm run dev
+```
+
+Open http://localhost:3000.
+
+The app supports local-only mode. If Supabase variables are omitted, it should still render and use browser-local state; cloud auth/sync are disabled.
+
+## Environment variables
+
+```bash
+# Optional for local-only mode, required for cloud sync/auth
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+
+# Optional AI features
+HACKCLUB_API_KEY=
+HACKCLUB_MODEL=
+
+# Optional web/textbook research
+TAVILY_API_KEY=
+```
+
+Never commit real keys.
+
+## Supabase setup
+
+1. Create a Supabase project.
+2. Run `supabase_schema.sql` in the Supabase SQL editor.
+3. Run `supabase_seed.sql` in the SQL editor to seed shared syllabus topics and reference questions.
+4. Add the project URL and publishable key to `.env.local`.
+
+Shared `topics` and `questions` reference tables are read-only for client roles. Seed or update them only through privileged SQL migrations/service-role workflows.
+
+## Validation
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npm audit --omit=dev
+```
+
+Production smoke test:
+
+```bash
+npm start
+curl -f http://localhost:3000/
+curl -f http://localhost:3000/api/questions
+```
+
+E2E tests require the app to be running:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npx playwright test
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Architecture notes
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Global learning state lives in `src/store/index.tsx` and is persisted locally, then synchronized to Supabase when configured.
+- Routine cloud synchronization is upsert-only. Remote user data is deleted only through explicit reset paths, not because stale/trimmed local state is missing rows.
+- AI actions that mutate application state require user confirmation. Tutor uses its richer pending-action cards; other surfaces use a centralized confirmation guard.
+- AI-generated test questions are validated before entering the test arena: exactly four distinct meaningful options, a valid answer index, and a non-placeholder explanation are required.
+- Function graphing uses a restricted math parser rather than JavaScript `eval`/`new Function`.
+- Revision scheduling uses the shared SM-2 implementation in `src/lib/learning`.

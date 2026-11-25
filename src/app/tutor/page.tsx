@@ -546,7 +546,7 @@ export default function TutorPage() {
   const handleLocalStoreAction = (action: string, args: any) => {
     try {
       console.log(`[Tutor Action Dispatcher] Executing client action: ${action}`, args);
-      handleStoreAction(action, args, { dispatch, getTopicById, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router });
+      handleStoreAction(action, args, { dispatch, getTopicById, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router, skipActionConfirmation: true });
     } catch (e) {
       console.error('Failed to execute client-side store action:', action, args, e);
     }
