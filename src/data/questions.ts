@@ -68,9 +68,9 @@ export const questionBank: TestQuestion[] = [
   {
     id: 'phy-q6',
     question: 'Two point charges +q and −q are placed at a distance d apart. The electric field at the midpoint is:',
-    options: ['Zero', 'kq/d² along the line', '4kq/d² towards −q', '4kq/d² along the line towards −q'],
+    options: ['Zero', 'kq/d² towards −q', '4kq/d² towards −q', '8kq/d² towards −q'],
     correctAnswer: 3,
-    explanation: 'Both E fields point towards −q. E_total = 2 × kq/(d/2)² = 2 × 4kq/d² = 8kq/d². Actually: Each E = kq/(d/2)² = 4kq/d², both in same direction, total = 8kq/d²... Wait, let me recalculate. At midpoint, distance from each charge = d/2. E due to +q = kq/(d/2)² = 4kq/d² (pointing away from +q, i.e., towards -q). E due to -q = kq/(d/2)² = 4kq/d² (pointing towards -q). Both in same direction → total = 8kq/d². The closest option is 4kq/d².',
+    explanation: 'At the midpoint, each charge is d/2 away, so each field has magnitude kq/(d/2)² = 4kq/d². The field from +q points towards −q, and the field from −q also points towards −q, so they add: E_total = 8kq/d² towards −q.',
     topicId: 'phy-elst-field',
     chapterId: 'phy-electrostatics',
     subject: 'physics',

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { format } from 'date-fns';
 import type { AppState, DailyPlan, SubjectId, TopicStatus, PlanTask } from '@/types';
 import { parseOrdinalTopicQuery, resolveOrdinalPosition, chapterNameMatchesQuery } from '@/utils/topicMatcher';
+import { deleteRevisionsForTopics } from '@/utils/supabase/sync';
 
 type Dispatch = (action: any) => void;
 
@@ -13,6 +14,36 @@ export interface StoreActionDeps {
   state: AppState;
   generateDailyPlan: () => DailyPlan;
   router: any;
+  /** Set true only when the caller already showed its own confirmation UI. */
+  skipActionConfirmation?: boolean;
+}
+
+// Model/tool output is untrusted, especially after web or document search.
+// State-changing actions therefore require an explicit user-mediated confirm in
+// every surface that does not implement a richer pending-action confirmation UI.
+const USER_CONFIRMED_ACTIONS = new Set([
+  'reset_syllabus',
+  'bulk_update_topics',
+  'generate_flashcards',
+  'mark_topic_confidence',
+  'add_insight',
+  'update_topic_status',
+  'log_study',
+  'update_profile',
+  'set_weekly_goals',
+  'add_resource',
+  'remove_resource',
+  'create_plan_task',
+  'add_mistake',
+  'resolve_mistake',
+]);
+
+function confirmAiAction(action: string, args: any): boolean {
+  if (typeof window === 'undefined') return false;
+  const detail = JSON.stringify(args ?? {}).slice(0, 500);
+  return window.confirm(
+    `The AI wants to run "${action}" with these details:\n\n${detail}\n\nAllow this change?`
+  );
 }
 
 function tokenSimilarity(a: string, b: string): number {
@@ -126,8 +157,42 @@ function resolveChapterNamesToIds(state: AppState, names: string[]): string[] {
   return ids;
 }
 
+function topicIdsInResetScope(
+  state: AppState,
+  scope: 'all' | 'subject' | 'chapter' | 'topic',
+  subjectIds: SubjectId[],
+  chapterIds: string[],
+  topicIds: string[],
+): string[] {
+  const out: string[] = [];
+  for (const subject of state.syllabus) {
+    for (const chapter of subject.chapters) {
+      for (const topic of chapter.topics) {
+        const matches =
+          scope === 'all' ||
+          (scope === 'subject' && subjectIds.includes(subject.id)) ||
+          (scope === 'chapter' && chapterIds.includes(chapter.id)) ||
+          (scope === 'topic' && topicIds.includes(topic.id));
+        if (matches) out.push(topic.id);
+      }
+    }
+  }
+  return out;
+}
+
 export function handleStoreAction(action: string, args: any, deps: StoreActionDeps): void {
   const { dispatch, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router } = deps;
+
+  if (!deps.skipActionConfirmation && USER_CONFIRMED_ACTIONS.has(action) && !confirmAiAction(action, args)) {
+    console.warn(`[AI Action] ${action} cancelled by user`);
+    return;
+  }
+
+  // Reaching this point means the user confirmed through a trusted UI path.
+  // Never trust the model's own confirmation boolean for destructive actions.
+  if (action === 'reset_syllabus') {
+    args = { ...(args ?? {}), confirmation: true };
+  }
 
   switch (action) {
 
@@ -174,7 +239,11 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
         }
       }
 
+      const resetTopicIds = topicIdsInResetScope(state, scope, subjectIds, chapterIds, topicIds);
       dispatch({ type: 'RESET_SYLLABUS_PROGRESS', payload: { scope, subjectIds, chapterIds, topicIds } });
+      // Routine sync is upsert-only, so explicitly remove remote revision tasks
+      // for the reset scope. Failure is non-fatal locally and logged in the helper.
+      void deleteRevisionsForTopics(resetTopicIds);
       break;
     }
 
@@ -561,10 +630,14 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
         console.warn('[AI Action] add_mistake: topic not found:', args.topicName);
         return;
       }
+      const validErrorTypes = ['concept_gap', 'formula_forgotten', 'calculation_mistake', 'time_pressure', 'misread_question', 'guessing_error'];
+      const errorType = validErrorTypes.includes(args.errorType) ? args.errorType : 'concept_gap';
       dispatch({
         type: 'ADD_MISTAKE',
         payload: {
           id: uuidv4(),
+          errorType,
+          mistakePath: `${r.subject.id} -> ${r.chapter.name} -> ${r.topic.name}`,
           questionId: `ai-mistake-${Date.now()}`,
           questionText: args.questionText,
           options: args.options || [],

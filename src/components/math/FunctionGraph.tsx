@@ -1,51 +1,71 @@
 'use client';
 
+import { parse, type MathNode } from 'mathjs';
+
 // SVG function graphing for AI chat responses: a safe math-expression
 // evaluator, the <FunctionGraph> SVG plot, and extractGraphReferences()
 // which pulls "graph of y = ..." patterns out of LLM text.
 // Shared by the tutor page, coach page and FloatingAICopilot.
 
-// Safe math expression evaluator for graphing. Uses Function constructor with
-// `with(Math)` so common functions (sin, cos, sqrt, etc.) and constants (pi, e)
-// are available without exposing the global scope.
+// Safe math expression evaluator for graphing. Expressions are parsed by
+// mathjs's restricted math parser instead of eval/new Function, so model or
+// user input cannot execute JavaScript in the browser.
+const compiledExpressions = new Map<string, MathNode | null>();
+const FORBIDDEN_IDENTIFIERS = /(?:constructor|prototype|__proto__|eval|function|import|require|window|document|globalThis)/i;
+
+function normalizeMathExpression(expr: string): string {
+  let processed = expr
+    .replace(/²/g, '^2')
+    .replace(/³/g, '^3')
+    .replace(/\\left/g, '')
+    .replace(/\\right/g, '')
+    .replace(/\\pi\b/g, 'pi')
+    .replace(/\\cdot\b/g, '*')
+    .replace(/\\times\b/g, '*')
+    .replace(/\\div\b/g, '/')
+    .replace(/\\sqrt\s*\{([^}]+)\}/g, 'sqrt($1)')
+    .replace(/\\sin\b/g, 'sin')
+    .replace(/\\cos\b/g, 'cos')
+    .replace(/\\tan\b/g, 'tan')
+    .replace(/\\log\b/g, 'log10')
+    .replace(/\\ln\b/g, 'log')
+    .replace(/\\exp\b/g, 'exp')
+    .replace(/\\abs\s*\{([^}]+)\}/g, 'abs($1)');
+
+  // The extraction logic treats y as the dependent variable; plot it as f(x).
+  if (processed.trim() === 'y' || /(^|[^a-zA-Z])y($|[^a-zA-Z])/.test(processed)) {
+    processed = processed.replace(/\by\b/g, 'x');
+  }
+  return processed.trim();
+}
+
+function compileMathExpression(expr: string): MathNode | null {
+  if (compiledExpressions.has(expr)) return compiledExpressions.get(expr) ?? null;
+  const normalized = normalizeMathExpression(expr);
+  let compiled: MathNode | null = null;
+
+  if (
+    normalized.length > 0 &&
+    normalized.length <= 80 &&
+    !FORBIDDEN_IDENTIFIERS.test(normalized) &&
+    /^[0-9a-zA-Z_+\-*/^().,\s]+$/.test(normalized)
+  ) {
+    try {
+      compiled = parse(normalized);
+    } catch {
+      compiled = null;
+    }
+  }
+
+  compiledExpressions.set(expr, compiled);
+  return compiled;
+}
+
 export function evaluateMathExpression(expr: string, x: number): number | null {
   try {
-    // Normalize LaTeX-style math to JS expressions. The LLM sometimes writes
-    // "graph of $x = y$" — the captured expression is "y" but we graph y as
-    // a function of x, so we treat the variable `y` in the expression as if
-    // it were `x` (since "x = y" means y and x are interchangeable on this
-    // line — the curve plotted is the same).
-    // Also handle unicode superscripts like x² which the LLM sometimes uses.
-    let processed = expr
-      .replace(/\^/g, '**')
-      .replace(/²/g, '**2')
-      .replace(/³/g, '**3');
-      
-    if (processed.trim() === 'y' || /(^|[^a-zA-Z])y($|[^a-zA-Z])/.test(processed)) {
-      // Replace any standalone `y` (not preceded/followed by another letter)
-      // with `x`. This handles "y", "y + 1", "sin(y)", etc.
-      processed = processed.replace(/\by\b/g, 'x');
-    }
-
-    // Normalize LaTeX-style math to JS expressions
-    const normalized = processed
-      .replace(/\\pi\b/g, 'PI')
-      .replace(/\\cdot\b/g, '*')
-      .replace(/\\times\b/g, '*')
-      .replace(/\\div\b/g, '/')
-      .replace(/\\sqrt\s*\{([^}]+)\}/g, 'Math.sqrt($1)')
-      .replace(/\\sin\b/g, 'Math.sin')
-      .replace(/\\cos\b/g, 'Math.cos')
-      .replace(/\\tan\b/g, 'Math.tan')
-      .replace(/\\log\b/g, 'Math.log10')
-      .replace(/\\ln\b/g, 'Math.log')
-      .replace(/\\exp\b/g, 'Math.exp')
-      .replace(/\\abs\s*\{([^}]+)\}/g, 'Math.abs($1)')
-      .replace(/PI/g, 'Math.PI');
-
-     
-    const fn = new Function('x', `with (Math) { return (${normalized}); }`);
-    const result = fn(x);
+    const compiled = compileMathExpression(expr);
+    if (!compiled) return null;
+    const result = compiled.evaluate({ x });
     if (typeof result !== 'number' || !isFinite(result) || isNaN(result)) return null;
     return result;
   } catch {

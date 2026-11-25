@@ -14,7 +14,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -29,12 +29,22 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Build
+      - name: Build without secrets
         run: npm run build
-        env:
-          # Build must succeed without secrets (features degrade gracefully).
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
 
-      - name: Dependency audit (non-blocking)
-        run: npm audit --omit=dev || true
+      - name: Production dependency audit
+        run: npm audit --omit=dev
+
+      - name: Production smoke test without Supabase env
+        run: |
+          npm start > /tmp/jee-os-next.log 2>&1 &
+          server_pid=$!
+          trap 'kill $server_pid 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:3000/; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:3000/
+          curl -fsS -o /dev/null http://127.0.0.1:3000/api/questions

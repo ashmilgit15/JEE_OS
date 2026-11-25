@@ -6,7 +6,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # JEE OS
 
-Next.js 16.2.7 + React 19.2.4 + Tailwind v4 + `@base-ui/react` (not Radix) + Supabase SSR.
+Next.js 16.4.6 + React 19.2.4 + Tailwind v4 + `@base-ui/react` (not Radix) + Supabase SSR.
 
 ## Commands
 
@@ -18,7 +18,7 @@ Next.js 16.2.7 + React 19.2.4 + Tailwind v4 + `@base-ui/react` (not Radix) + Sup
 | `npm start` | Production server |
 | `npx playwright test` | E2E tests (requires dev server running) |
 
-No test runner in `package.json`. Playwright config at `playwright.config.ts`, tests in `e2e/`.
+`npm test` runs Vitest unit tests. Playwright config at `playwright.config.ts`, E2E tests in `e2e/`.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ No test runner in `package.json`. Playwright config at `playwright.config.ts`, t
 - **Styling:** Tailwind v4 with CSS-first config (no `tailwind.config.js`). Dark-first design. CSS variables in `oklch()`.
 - **API:** `/api/chat` route streams NDJSON for AI tutor/coach. Falls back to a hardcoded smart fallback if Hack Club API key is missing.
 - **External APIs:** Hack Club AI Proxy (chat completions), Tavily (web search).
-- **Proxy file:** Uses `src/proxy.ts` (renamed from `src/middleware.ts` per Next.js 16.2.7 deprecation).
+- **Proxy file:** Uses `src/proxy.ts` (renamed from `src/middleware.ts` per Next.js 16 deprecation).
 
 ## Key file locations
 
@@ -39,7 +39,7 @@ No test runner in `package.json`. Playwright config at `playwright.config.ts`, t
 | Store (reducer + context) | `src/store/index.tsx` |
 | TypeScript types | `src/types/index.ts` |
 | Syllabus data | `src/data/syllabus.ts` |
-| Question bank (570 questions) | `src/data/questions.ts` |
+| Question bank (60 curated questions) | `src/data/questions.ts` |
 | API route (AI chat stream) | `src/app/api/chat/route.ts` |
 | Supabase clients | `src/utils/supabase/` |
 | Route guard / session sync | `src/proxy.ts` |

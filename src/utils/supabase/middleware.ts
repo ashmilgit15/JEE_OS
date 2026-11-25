@@ -9,6 +9,13 @@ export const createClient = async (request: NextRequest) => {
     },
   });
 
+  // Local-only mode: when Supabase is not configured there is no session to
+  // refresh. Bypass auth work entirely instead of constructing an invalid
+  // client, which throws and turns every route into a 500.
+  if (!env.supabaseConfigured) {
+    return supabaseResponse;
+  }
+
   const supabase = createServerClient(
     env.supabaseUrl,
     env.supabasePublishableKey,

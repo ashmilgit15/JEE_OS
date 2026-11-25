@@ -398,7 +398,7 @@ Return ONLY valid JSON, no other text.`;
 
     // Load conversation history from Supabase for context engineering
     let conversationHistory: { role: string; content: string }[] = [];
-    if (deviceId && agentType) {
+    if (deviceId && agentType && env.supabaseConfigured) {
       try {
         const cookieStore = await cookies();
         const supabase = createClient(cookieStore);
@@ -736,42 +736,53 @@ I searched the web for "${latestQuery}" and found the following:
                     }
                   }
                 } else if (name === 'generate_mock_test') {
-                  // Map the AI-generated questions into the internal TestQuestion format
-                  const testQs = (args.questions || []).map((q: any, i: number) => ({
-                    id: `ai-gen-${Date.now()}-${i}`,
-                    question: q.question,
-                    options: q.options || [],
-                    correctAnswer: typeof q.correctAnswer === 'number' ? q.correctAnswer : 0,
-                    explanation: q.explanation || '',
-                    topicId: '',
-                    chapterId: '',
-                    subject: args.subject || 'mathematics',
-                    difficulty: 'medium',
-                    type: 'mcq',
-                    source: 'AI Tutor Generated'
-                  }));
+                  const subjects = normalizeGeneratedSubjects(args);
+                  const primarySubject = subjects[0];
+                  const validQuestions = validGeneratedQuestions(args.questions);
 
-                  // Emit the dynamic questions so the frontend caches them
-                  sendEvent({
-                    type: 'dynamic_questions',
-                    questions: testQs,
-                    title: args.title || 'AI Generated Test',
-                    subject: args.subject || 'mathematics',
-                    source: 'AI Tutor Generated'
-                  });
-
-                  // Then navigate the user to the test arena with dqKey params
-                  sendEvent({
-                    type: 'client_action',
-                    action: 'generate_mock_test',
-                    args: {
-                      subjects: [args.subject || 'mathematics'],
+                  if (validQuestions.length === 0) {
+                    sendEvent({
+                      type: 'text',
+                      content: 'I could not validate enough well-formed four-option questions for that test, so I did not launch it. Please ask again with a narrower chapter or topic.',
+                    });
+                  } else {
+                    // Map validated AI-generated questions into the internal TestQuestion format
+                    const testQs = validQuestions.map((q, i) => ({
+                      id: `ai-gen-${Date.now()}-${i}`,
+                      question: q.question,
+                      options: q.options,
+                      correctAnswer: q.correctAnswer,
+                      explanation: q.explanation,
+                      topicId: '',
+                      chapterId: '',
+                      subject: primarySubject,
                       difficulty: args.difficulty || 'medium',
-                      questionCount: testQs.length,
+                      type: 'mcq',
+                      source: 'AI Tutor Generated'
+                    }));
+
+                    // Emit the dynamic questions so the frontend caches them
+                    sendEvent({
+                      type: 'dynamic_questions',
+                      questions: testQs,
                       title: args.title || 'AI Generated Test',
-                    }
-                  });
-                  toolActionEmitted = true;
+                      subject: primarySubject,
+                      source: 'AI Tutor Generated'
+                    });
+
+                    // Then navigate the user to the test arena with dqKey params
+                    sendEvent({
+                      type: 'client_action',
+                      action: 'generate_mock_test',
+                      args: {
+                        subjects,
+                        difficulty: args.difficulty || 'medium',
+                        questionCount: testQs.length,
+                        title: args.title || 'AI Generated Test',
+                      }
+                    });
+                    toolActionEmitted = true;
+                  }
                 } else {
                   // Client action
                   // Hydrate topic info if topicName is provided
@@ -816,7 +827,7 @@ I searched the web for "${latestQuery}" and found the following:
 
 
           // Save conversation to Supabase after streaming completes
-          if (deviceId && agentType) {
+          if (deviceId && agentType && env.supabaseConfigured) {
             try {
               const cookieStore = await cookies();
               const supabase = createClient(cookieStore);
@@ -1209,23 +1220,26 @@ Your accuracy rate of **${accuracy}** indicates your current level of preparatio
       sendEvent({ type: 'status', message: `📝 Crafting questions from research...` });
       await new Promise(r => setTimeout(r, 600));
 
-      // Build questions from search results or use defaults
-      const questions = buildQuestionsFromSearchResults(searchResults, searchTopic).map((q: any, i: number) => ({
+      // Build questions from search results or use curated defaults, then reject
+      // malformed/placeholder MCQs before they can enter the test arena.
+      const validQuestions = validGeneratedQuestions(buildQuestionsFromSearchResults(searchResults, searchTopic));
+      const matchedTopic = findTopicByName(searchTopic);
+      const questions = validQuestions.map((q, i) => ({
         id: `ai-gen-${Date.now()}-${i}`,
         question: q.question,
-        options: q.options || [],
-        correctAnswer: typeof q.correctAnswer === 'number' ? q.correctAnswer : 0,
-        explanation: q.explanation || '',
-        topicId: q.topicId || '',
-        chapterId: q.chapterId || '',
-        subject: q.subject || 'mathematics',
-        difficulty: q.difficulty || 'medium',
-        type: q.type || 'mcq',
-        source: q.source || 'AI Tutor Generated'
+        options: q.options,
+        correctAnswer: q.correctAnswer,
+        explanation: q.explanation,
+        topicId: matchedTopic?.id || '',
+        chapterId: matchedTopic?.chapterId || '',
+        subject: matchedTopic?.subject || 'mathematics',
+        difficulty: 'medium',
+        type: 'mcq',
+        source: 'AI Tutor Generated'
       }));
 
       if (questions.length === 0) {
-        sendEvent({ type: 'text', content: `I searched the web for "${searchTopic}" questions but couldn't find enough material. Please try a more specific topic name.` });
+        sendEvent({ type: 'text', content: `I searched the web for "${searchTopic}" questions but could not validate enough complete four-option questions. Please try a more specific topic name.` });
         return;
       }
 
@@ -1434,6 +1448,55 @@ Your accuracy rate of **${accuracy}** indicates your current level of preparatio
   }
 }
 
+const generatedQuestionSchema = z.object({
+  question: z.string().trim().min(15).max(2000),
+  options: z.array(z.string().trim().min(1).max(500)).length(4),
+  correctAnswer: z.number().int().min(0).max(3),
+  explanation: z.string().trim().min(10).max(1500),
+});
+
+function validGeneratedQuestions(input: unknown): z.infer<typeof generatedQuestionSchema>[] {
+  if (!Array.isArray(input)) return [];
+  const valid: z.infer<typeof generatedQuestionSchema>[] = [];
+
+  for (const raw of input) {
+    if (!raw || typeof raw !== 'object') continue;
+    const candidate = {
+      ...(raw as Record<string, unknown>),
+      correctAnswer: typeof (raw as any).correctAnswer === 'number'
+        ? (raw as any).correctAnswer
+        : (raw as any).correct_answer,
+    };
+    const parsed = generatedQuestionSchema.safeParse(candidate);
+    if (!parsed.success) continue;
+
+    const normalizedOptions = parsed.data.options.map(o => o.trim().toLowerCase());
+    const hasDuplicateOptions = new Set(normalizedOptions).size !== normalizedOptions.length;
+    const hasPlaceholderOptions = normalizedOptions.some(o =>
+      /^option\s*\d+$/.test(o) || ['none of the above', 'all of the above', 'cannot be determined', 'insufficient data'].includes(o)
+    );
+    const genericExplanation = /based on the problem statement|solve step by step to verify/i.test(parsed.data.explanation);
+    if (!hasDuplicateOptions && !hasPlaceholderOptions && !genericExplanation) {
+      valid.push(parsed.data);
+    }
+  }
+
+  return valid.slice(0, 30);
+}
+
+function normalizeGeneratedSubjects(args: any): string[] {
+  const allowed = new Set(['physics', 'chemistry', 'mathematics']);
+  const raw = Array.isArray(args?.subjects)
+    ? args.subjects
+    : args?.subject
+      ? [args.subject]
+      : [];
+  const normalized = raw
+    .map((s: unknown) => String(s).toLowerCase())
+    .filter((s: string) => allowed.has(s));
+  return normalized.length > 0 ? Array.from(new Set(normalized)) : ['mathematics'];
+}
+
 function buildQuestionsFromSearchResults(searchResults: any, topicName: string): any[] {
   const questions: any[] = [];
   const textContent: string[] = [];
@@ -1460,53 +1523,11 @@ function buildQuestionsFromSearchResults(searchResults: any, topicName: string):
     return generateDefaultQuestions(topicName);
   }
 
-  const numberedQs: string[] = [];
-  const qRegex = /(?:^|\n)(?:\d+[\).]\s*|Q\.?\s*\d+[\).]\s*|Question\s*\d*[:\s])(.*?)(?=(?:\n(?:\d+[\).]|Q\.?|Question)|$))/gi;
-  let qMatch;
-  while ((qMatch = qRegex.exec(body)) !== null) {
-    const q = qMatch[1].trim();
-    if (q.length > 10 && q.length < 300) {
-      numberedQs.push(q);
-    }
-  }
-
-  if (numberedQs.length >= 3) {
-    for (let i = 0; i < Math.min(numberedQs.length, 15); i++) {
-      const q = numberedQs[i];
-      const options = generateMcqOptions(q, i);
-      questions.push({
-        question: q,
-        options: options.options,
-        correctAnswer: options.correctAnswer,
-        explanation: options.explanation,
-      });
-    }
-  }
-
+  // Never invent MCQ options for a scraped free-text question. Doing so makes
+  // the correct answer arbitrary and teaches wrong material. If structured
+  // options were not present in the source, fall back to curated defaults.
   if (questions.length >= 2) return questions;
   return generateDefaultQuestions(topicName);
-}
-
-function generateMcqOptions(_questionText: string, seed: number): { options: string[]; correctAnswer: number; explanation: string } {
-  const commonWrongAnswers = [
-    'None of the above',
-    'Cannot be determined',
-    'All of the above',
-    'Insufficient data',
-  ];
-
-  const correctVal = seed % 4;
-  const distractors = [0, 1, 2, 3].filter(d => d !== correctVal);
-  const options = [`Option ${correctVal + 1}`];
-  for (const d of distractors.slice(0, 3)) {
-    options.push(commonWrongAnswers[d % commonWrongAnswers.length]);
-  }
-
-  return {
-    options,
-    correctAnswer: correctVal,
-    explanation: `Based on the problem statement. Solve step by step to verify.`
-  };
 }
 
 function generateDefaultQuestions(topicName: string): any[] {

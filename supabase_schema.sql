@@ -29,9 +29,9 @@ END $$;
 
 -- 2. TOPICS TABLE
 -- Reference data — all authenticated and anonymous users can read.
--- Seeding only needs INSERT (the client seeds with ignoreDuplicates, i.e.
--- ON CONFLICT DO NOTHING), so clients get insert-only access: existing rows
--- can never be modified or deleted by users.
+-- Writes are intentionally NOT granted to clients: this is shared curriculum
+-- data, so end users must never be able to poison or replace it. Seed it with
+-- supabase_seed.sql from the Supabase SQL editor / service role instead.
 create table if not exists public.topics (
     id text primary key, -- unique alphanumeric ID e.g. 'phy-mech-units'
     name text not null,
@@ -50,13 +50,12 @@ DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can upsert topics' AND tablename = 'topics') THEN
     drop policy "Anyone can upsert topics" on public.topics;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can insert topics' AND tablename = 'topics') THEN
-    create policy "Anyone can insert topics" on public.topics
-      for insert with check (true);
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can insert topics' AND tablename = 'topics') THEN
+    drop policy "Anyone can insert topics" on public.topics;
   END IF;
 END $$;
 
--- Pre-seed topics from syllabus data is done on initialize.
+-- Pre-seed topics by running supabase_seed.sql as a privileged migration.
 
 -- 3. USER TOPIC STATUS TABLE (Tracks user status, confidence, accuracy per topic)
 create table if not exists public.user_topic_status (
@@ -248,6 +247,49 @@ create table if not exists public.document_chunks (
     created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- RAG documents are private user data unless explicitly marked global by a
+-- privileged writer. Clients can read global rows but cannot create them.
+alter table public.documents enable row level security;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can manage their own documents' AND tablename = 'documents') THEN
+    create policy "Users can manage their own documents" on public.documents
+      for all using (auth.uid() = user_id)
+      with check (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can read global documents' AND tablename = 'documents') THEN
+    create policy "Anyone can read global documents" on public.documents
+      for select using (user_id is null);
+  END IF;
+END $$;
+
+alter table public.document_chunks enable row level security;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can manage chunks for their documents' AND tablename = 'document_chunks') THEN
+    create policy "Users can manage chunks for their documents" on public.document_chunks
+      for all using (
+        exists (
+          select 1 from public.documents d
+          where d.id = document_id and d.user_id = auth.uid()
+        )
+      )
+      with check (
+        exists (
+          select 1 from public.documents d
+          where d.id = document_id and d.user_id = auth.uid()
+        )
+      );
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can read global document chunks' AND tablename = 'document_chunks') THEN
+    create policy "Anyone can read global document chunks" on public.document_chunks
+      for select using (
+        exists (
+          select 1 from public.documents d
+          where d.id = document_id and d.user_id is null
+        )
+      );
+  END IF;
+END $$;
+
 -- 11. AI CONVERSATIONS TABLE
 create table if not exists public.ai_conversations (
     id uuid default gen_random_uuid() primary key,
@@ -344,8 +386,8 @@ END $$;
 -- 14. QUESTIONS TABLE  (shared JEE question bank — read-only reference data)
 -- Migrated out of the static src/data/questions.ts so the bank can grow to cover
 -- all ~160 topics without bloating the client bundle. Served via /api/questions.
--- Seeded by src/utils/supabase/seedQuestions.ts. Public read; writes restricted
--- to the seed path (insert allowed, no update/delete policy → effectively locked).
+-- Seed with supabase_seed.sql from the Supabase SQL editor / service role.
+-- Public read; no client write policies.
 create table if not exists public.questions (
     id text primary key, -- stable question id e.g. 'phy-q1'
     question text not null,
@@ -370,8 +412,7 @@ DO $$ BEGIN
     create policy "Anyone can read questions" on public.questions
       for select using (true);
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can insert questions' AND tablename = 'questions') THEN
-    create policy "Anyone can insert questions" on public.questions
-      for insert with check (true);
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can insert questions' AND tablename = 'questions') THEN
+    drop policy "Anyone can insert questions" on public.questions;
   END IF;
 END $$;
