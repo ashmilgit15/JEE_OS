@@ -1071,8 +1071,8 @@ Your accuracy rate of **${accuracy}** indicates your current level of preparatio
       sendEvent({
         type: 'text',
         content: statusCandidate === 'not_started'
-          ? `I've removed **${topic.name}** (${topic.subject}) from your active list and reset it to **not started**. You can pick it back up anytime from the **Syllabus Tracker**. 📋`
-          : `I've successfully updated your syllabus! marked **${topic.name}** (${topic.subject}) as **${statusCandidate}** with a confidence rating of 4 stars.\n\nSince you've completed this topic, I've also scheduled revisions for it on Day 1, Day 7, and Day 30 in your **Revision Engine** tab. Keep it up! 🚀`
+          ? `\n\nRequested change: reset **${topic.name}** (${topic.subject}) to **not started**. It is applied only if you approve the action.`
+          : `\n\nRequested change: mark **${topic.name}** (${topic.subject}) as **${statusCandidate}**. It is applied, and revisions are scheduled, only if you approve the action.`
       });
       return;
     } else {

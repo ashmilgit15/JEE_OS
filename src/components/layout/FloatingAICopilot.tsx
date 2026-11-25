@@ -395,11 +395,14 @@ Guidelines:
                     // sessionStorage unavailable
                   }
                 }
-                handleStoreAction(event.action, event.args, { dispatch, getTopicById, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router });
-                let actionDesc = `✅ Action completed: ${event.action}`;
-                if (event.action === 'update_topic_status' && event.args.topicName) {
+                let actionExecuted = false;
+                handleStoreAction(event.action, event.args, { dispatch, getTopicById, completeTopicWithRevisions, logStudy, state, generateDailyPlan, router, onActionResult: (executed) => { actionExecuted = executed; } });
+                let actionDesc = actionExecuted
+                  ? `✅ Action completed: ${event.action}`
+                  : `🚫 Action not executed: ${event.action}`;
+                if (actionExecuted && event.action === 'update_topic_status' && event.args.topicName) {
                   actionDesc = `✅ **${event.args.topicName}** marked as **${event.args.status}** in your syllabus tracker!`;
-                } else if (event.action === 'generate_flashcards') {
+                } else if (actionExecuted && event.action === 'generate_flashcards') {
                   actionDesc = `✅ Created ${event.args.flashcards?.length || 0} flashcards and launching deck!`;
                 }
                 assistantText += `\n\n${actionDesc}`;

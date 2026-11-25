@@ -17,7 +17,7 @@ function getClient() {
 type AgentType = 'tutor' | 'coach';
 
 export async function initSession(): Promise<string | null> {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === 'undefined' || !env.supabaseConfigured) return null;
 
   const cachedId = localStorage.getItem(DEVICE_ID_KEY);
 

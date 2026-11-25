@@ -16,6 +16,7 @@ export interface StoreActionDeps {
   router: any;
   /** Set true only when the caller already showed its own confirmation UI. */
   skipActionConfirmation?: boolean;
+  onActionResult?: (executed: boolean) => void;
 }
 
 // Model/tool output is untrusted, especially after web or document search.
@@ -185,6 +186,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
 
   if (!deps.skipActionConfirmation && USER_CONFIRMED_ACTIONS.has(action) && !confirmAiAction(action, args)) {
     console.warn(`[AI Action] ${action} cancelled by user`);
+    deps.onActionResult?.(false);
     return;
   }
 
@@ -199,6 +201,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
     case 'reset_syllabus': {
       if (!args.confirmation) {
         console.warn('[AI Action] reset_syllabus called without confirmation');
+        deps.onActionResult?.(false);
         return;
       }
 
@@ -213,6 +216,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
         }
         if (subjectIds.length === 0) {
           console.warn('[AI Action] reset_syllabus scope=subject but no subjects provided');
+          deps.onActionResult?.(false);
           return;
         }
       } else if (scope === 'chapter') {
@@ -224,6 +228,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
         }
         if (chapterIds.length === 0) {
           console.warn('[AI Action] reset_syllabus scope=chapter but no chapterIds/names provided');
+          deps.onActionResult?.(false);
           return;
         }
       } else if (scope === 'topic') {
@@ -235,6 +240,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
         }
         if (topicIds.length === 0) {
           console.warn('[AI Action] reset_syllabus scope=topic but no topicIds/names provided');
+          deps.onActionResult?.(false);
           return;
         }
       }
@@ -253,6 +259,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
       const validStatus: TopicStatus[] = ['learning', 'completed', 'revised', 'mastered', 'not_started'];
       if (!validStatus.includes(status)) {
         console.warn('[AI Action] bulk_update_topics invalid status:', status);
+        deps.onActionResult?.(false);
         return;
       }
 
@@ -284,6 +291,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
       topicIds = Array.from(new Set(topicIds));
       if (topicIds.length === 0) {
         console.warn('[AI Action] bulk_update_topics: no topics matched filters');
+        deps.onActionResult?.(false);
         return;
       }
 
@@ -382,6 +390,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
       const r = findTopicByName(state, args.topicName);
       if (!r) {
         console.warn('[AI Action] mark_topic_confidence: topic not found:', args.topicName);
+        deps.onActionResult?.(false);
         return;
       }
       dispatch({
@@ -463,11 +472,13 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
       const r = findTopicByName(state, args.topicName);
       if (!r) {
         console.warn('[AI Action] update_topic_status: topic not found:', args.topicName);
+        deps.onActionResult?.(false);
         return;
       }
       const validStatus: TopicStatus[] = ['learning', 'completed', 'revised', 'mastered', 'not_started'];
       if (!validStatus.includes(args.status)) {
         console.warn('[AI Action] update_topic_status: invalid status:', args.status);
+        deps.onActionResult?.(false);
         return;
       }
       const scheduleRevisions = args.scheduleRevisions !== false;
@@ -517,6 +528,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
       const r = findTopicByName(state, args.topicName);
       if (!r) {
         console.warn('[AI Action] log_study: topic not found:', args.topicName);
+        deps.onActionResult?.(false);
         return;
       }
       const validTypes = ['study', 'revision', 'practice', 'test', 'school'] as const;
@@ -553,6 +565,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
     case 'add_resource': {
       if (!args.name || !args.url) {
         console.warn('[AI Action] add_resource missing name or url');
+        deps.onActionResult?.(false);
         return;
       }
       const validTypes = ['pdf', 'notes', 'formula_sheet', 'dpp', 'reference'] as const;
@@ -628,6 +641,7 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
       const r = findTopicByName(state, args.topicName);
       if (!r) {
         console.warn('[AI Action] add_mistake: topic not found:', args.topicName);
+        deps.onActionResult?.(false);
         return;
       }
       const validErrorTypes = ['concept_gap', 'formula_forgotten', 'calculation_mistake', 'time_pressure', 'misread_question', 'guessing_error'];
@@ -666,5 +680,9 @@ export function handleStoreAction(action: string, args: any, deps: StoreActionDe
 
     default:
       console.warn('[AI Action] Unknown action:', action);
+      deps.onActionResult?.(false);
+      return;
   }
+
+  deps.onActionResult?.(true);
 }
